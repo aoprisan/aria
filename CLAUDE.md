@@ -8,7 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cargo build              # Build the project
 cargo test               # Run all tests
 cargo test <name>        # Run tests matching <name>
-cargo run -- file.aria   # Compile Aria source to WASM
+```
+
+## CLI Usage
+
+```bash
+cargo run -- check file.aria           # Type-check without compiling
+cargo run -- build file.aria           # Compile to WASM (outputs file.wasm)
+cargo run -- build file.aria -o out.wasm  # Specify output path
+cargo run -- run file.aria             # Compile and execute via wasmtime
+cargo run -- repl                      # Interactive REPL
 ```
 
 ## Project Overview
@@ -33,6 +42,8 @@ Pipeline: **Source → Lexer → Parser → AST → Type Checker → Typed AST �
   - `env.rs` - Scoped symbol table for variable/function lookups
 
 - **`src/codegen/`** - WASM code generator using `wasm-encoder`. Maps Aria types to WASM (`Int`/`Bool` → `i32`, `Float` → `f64`). All functions are exported. Top-level statements compile to a `main` function.
+
+- **`src/cli/`** - Command-line interface using `clap`. Subcommands: `check`, `build`, `run`, `repl`. Error reporting via `ariadne`. Runtime execution via `wasmtime`.
 
 ### Operator Precedence (highest to lowest)
 
