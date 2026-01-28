@@ -5,35 +5,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
-cargo build          # Build the project
-cargo test           # Run all tests
-cargo test <name>    # Run tests matching <name>
-cargo run            # Run main (demo lexer)
+cargo build              # Build the project
+cargo test               # Run all tests
+cargo test <name>        # Run tests matching <name>
+cargo run -- file.aria   # Compile Aria source to WASM
 ```
 
 ## Project Overview
 
-Aria is a compiler frontend for a statically-typed programming language implemented in Rust. Uses `logos` for lexical analysis.
+Aria is a compiler for a statically-typed programming language that compiles to WebAssembly. Implemented in Rust using `logos` for lexical analysis and `wasm-encoder` for code generation.
 
 ## Architecture
 
-Pipeline: **Lexer → Parser → AST → Type Checker → (codegen stub)**
+Pipeline: **Source → Lexer → Parser → AST → Type Checker → Typed AST → Code Generator → WASM**
 
 ### Module Structure
 
 - **`src/lexer/`** - Tokenizer using `logos`. Handles keywords (`let`, `fn`, `if`, `else`, `true`, `false`), type keywords (`Int`, `Float`, `String`, `Bool`), operators, literals, and comments (`//`).
 
-- **`src/parser/`** - Recursive descent parser with precedence climbing. Parses statements (let bindings, function definitions) and expressions (binary ops, function calls, if/else, blocks). All nodes carry span information via `Spanned<T>`.
+- **`src/parser/`** - Recursive descent parser with precedence climbing. All nodes carry span information via `Spanned<T>`.
 
 - **`src/ast/`** - AST type definitions: `Program`, `Stmt`, `Expr`, `Type`, `Literal`, `BinOp`.
 
-- **`src/typechecker/`** - Bidirectional type checker producing a typed AST. Two-pass approach: first registers function signatures, then type-checks bodies. Uses scoped environment (`Env`) for variable bindings.
-  - `types.rs` - Internal `Type` enum extending AST types with `Unit` and `Function`
+- **`src/typechecker/`** - Bidirectional type checker with two-pass approach: first registers function signatures, then type-checks bodies.
+  - `types.rs` - Internal `Type` enum with `Unit` and `Function` variants
   - `typed_ast.rs` - Typed AST nodes (`TypedExpr`, `TypedStmt`, `TypedProgram`)
   - `env.rs` - Scoped symbol table for variable/function lookups
-  - `error.rs` - Type error definitions
 
-- **`src/codegen/`** - Placeholder module (not implemented).
+- **`src/codegen/`** - WASM code generator using `wasm-encoder`. Maps Aria types to WASM (`Int`/`Bool` → `i32`, `Float` → `f64`). All functions are exported. Top-level statements compile to a `main` function.
 
 ### Operator Precedence (highest to lowest)
 

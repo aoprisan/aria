@@ -6,3 +6,7 @@ edition = "2021"
 [dependencies]
 logos = "0.14"
 wasm-encoder = "0.221"
+clap = { version = "4", features = ["derive"] }
+ariadne = "0.4"
+wasmtime = "27"
+rustyline = "14"

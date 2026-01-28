@@ -1,0 +1,9 @@
+// Simple test program
+let x: Int = 42;
+let y = 10;
+
+fn add(a: Int, b: Int) -> Int { a + b }
+
+let result = add(x, y);
+let check = if result > 50 { 1 } else { 0 };
+check;
