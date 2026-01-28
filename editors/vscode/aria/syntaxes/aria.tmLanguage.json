@@ -1,0 +1,128 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Aria",
+  "scopeName": "source.aria",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#functions" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "name": "comment.line.double-slash.aria",
+      "match": "//.*$"
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.aria",
+          "match": "\\b(let|fn|if|else)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.aria",
+          "match": "\\b(Int|Float|String|Bool)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.aria",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.aria",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.aria",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.aria",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.aria",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(",
+          "captures": {
+            "1": { "name": "keyword.control.aria" },
+            "2": { "name": "entity.name.function.aria" }
+          }
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.aria",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.arithmetic.aria",
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.assignment.aria",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.arrow.aria",
+          "match": "->"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.terminator.aria",
+          "match": ";"
+        },
+        {
+          "name": "punctuation.separator.aria",
+          "match": ","
+        },
+        {
+          "name": "punctuation.colon.aria",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.brackets.round.aria",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.brackets.curly.aria",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.brackets.square.aria",
+          "match": "[\\[\\]]"
+        }
+      ]
+    }
+  }
+}
