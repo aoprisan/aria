@@ -62,6 +62,12 @@ pub enum TypeErrorKind {
 
     /// Wrong number of type arguments for a generic function.
     WrongNumberOfTypeArgs { func_name: String, expected: usize, found: usize },
+
+    /// Yield expression used outside of a generator function.
+    YieldOutsideGenerator,
+
+    /// Yield expression has wrong type for this generator.
+    YieldTypeMismatch { expected: Type, found: Type },
 }
 
 /// A type error with source location information.
@@ -152,6 +158,14 @@ impl TypeError {
 
     pub fn wrong_number_of_type_args(func_name: String, expected: usize, found: usize, span: Span) -> Self {
         TypeError::new(TypeErrorKind::WrongNumberOfTypeArgs { func_name, expected, found }, span)
+    }
+
+    pub fn yield_outside_generator(span: Span) -> Self {
+        TypeError::new(TypeErrorKind::YieldOutsideGenerator, span)
+    }
+
+    pub fn yield_type_mismatch(expected: Type, found: Type, span: Span) -> Self {
+        TypeError::new(TypeErrorKind::YieldTypeMismatch { expected, found }, span)
     }
 }
 
@@ -262,6 +276,16 @@ impl fmt::Display for TypeError {
                     f,
                     "generic function '{}' expects {} type argument(s), but {} were provided",
                     func_name, expected, found
+                )
+            }
+            TypeErrorKind::YieldOutsideGenerator => {
+                write!(f, "yield expression can only be used inside a generator function (use 'gen fn')")
+            }
+            TypeErrorKind::YieldTypeMismatch { expected, found } => {
+                write!(
+                    f,
+                    "yield expression has type {}, but generator expects {}",
+                    found, expected
                 )
             }
         }

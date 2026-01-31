@@ -34,6 +34,8 @@ pub struct TypeChecker {
 struct CurrentFunction {
     name: String,
     is_tailrec: bool,
+    /// If this is a generator, what type do yields produce?
+    generator_yield_type: Option<Type>,
 }
 
 impl TypeChecker {
@@ -147,7 +149,8 @@ impl TypeChecker {
                 return_ty,
                 body,
                 is_tailrec,
-            } => self.check_fn_stmt(name, type_params, params, return_ty, body, *is_tailrec, stmt.span.clone()),
+                is_generator,
+            } => self.check_fn_stmt(name, type_params, params, return_ty, body, *is_tailrec, *is_generator, stmt.span.clone()),
             Stmt::Expr(expr) => {
                 let typed_expr = self.check_expr(expr)?;
                 Ok(TypedStmt::new(TypedStmtKind::Expr(typed_expr), stmt.span.clone()))
@@ -225,6 +228,7 @@ impl TypeChecker {
         return_ty: &Spanned<crate::ast::Type>,
         body: &Spanned<Expr>,
         is_tailrec: bool,
+        is_generator: bool,
         span: logos::Span,
     ) -> Result<TypedStmt, TypeError> {
         // For generic functions, we skip type checking the body until instantiation
@@ -241,7 +245,18 @@ impl TypeChecker {
             ));
         }
 
-        let ret_type = Type::from_ast(&return_ty.node);
+        let declared_ret_type = Type::from_ast(&return_ty.node);
+
+        // For generator functions, the actual return type is Generator<T>
+        // where T is the declared return type (the yield type)
+        let (ret_type, generator_yield_type) = if is_generator {
+            (
+                Type::Generator(Box::new(declared_ret_type.clone())),
+                Some(declared_ret_type),
+            )
+        } else {
+            (declared_ret_type, None)
+        };
 
         // Enter new scope for function body
         self.env.push_scope();
@@ -251,6 +266,7 @@ impl TypeChecker {
         self.current_function = Some(CurrentFunction {
             name: name.to_string(),
             is_tailrec,
+            generator_yield_type: generator_yield_type.clone(),
         });
 
         // Bind parameters
@@ -264,10 +280,12 @@ impl TypeChecker {
 
         // Check body against return type
         // For tailrec functions, we check tail position
+        // For generators, we check against the yield type (the last value returned)
+        let expected_body_type = generator_yield_type.as_ref().unwrap_or(&ret_type);
         let typed_body = if is_tailrec {
-            self.check_expr_expecting_tailrec(body, &ret_type, true)?
+            self.check_expr_expecting_tailrec(body, expected_body_type, true)?
         } else {
-            self.check_expr_expecting(body, &ret_type)?
+            self.check_expr_expecting(body, expected_body_type)?
         };
 
         // Restore old context
@@ -342,6 +360,34 @@ impl TypeChecker {
             }
             Expr::EnumVariant { variant, payload } => {
                 self.check_enum_variant(variant, payload, expr.span.clone())
+            }
+            Expr::Yield(value) => {
+                // Check that we're inside a generator function
+                let expected_yield_type = match &self.current_function {
+                    Some(ctx) => match &ctx.generator_yield_type {
+                        Some(ty) => ty.clone(),
+                        None => return Err(TypeError::yield_outside_generator(expr.span.clone())),
+                    },
+                    None => return Err(TypeError::yield_outside_generator(expr.span.clone())),
+                };
+
+                // Type check the yielded value
+                let typed_value = self.check_expr(value)?;
+
+                // Verify the yielded type matches the expected generator type
+                if typed_value.ty != expected_yield_type {
+                    return Err(TypeError::yield_type_mismatch(
+                        expected_yield_type,
+                        typed_value.ty.clone(),
+                        expr.span.clone(),
+                    ));
+                }
+
+                Ok(TypedExpr::new(
+                    TypedExprKind::Yield(Box::new(typed_value)),
+                    expected_yield_type,
+                    expr.span.clone(),
+                ))
             }
         }
     }
@@ -449,6 +495,34 @@ impl TypeChecker {
             }
             Expr::EnumVariant { variant, payload } => {
                 self.check_enum_variant(variant, payload, expr.span.clone())
+            }
+            Expr::Yield(value) => {
+                // Check that we're inside a generator function
+                let expected_yield_type = match &self.current_function {
+                    Some(ctx) => match &ctx.generator_yield_type {
+                        Some(ty) => ty.clone(),
+                        None => return Err(TypeError::yield_outside_generator(expr.span.clone())),
+                    },
+                    None => return Err(TypeError::yield_outside_generator(expr.span.clone())),
+                };
+
+                // Type check the yielded value (not in tail position)
+                let typed_value = self.check_expr_tailrec(value, false)?;
+
+                // Verify the yielded type matches the expected generator type
+                if typed_value.ty != expected_yield_type {
+                    return Err(TypeError::yield_type_mismatch(
+                        expected_yield_type,
+                        typed_value.ty.clone(),
+                        expr.span.clone(),
+                    ));
+                }
+
+                Ok(TypedExpr::new(
+                    TypedExprKind::Yield(Box::new(typed_value)),
+                    expected_yield_type,
+                    expr.span.clone(),
+                ))
             }
         }
     }

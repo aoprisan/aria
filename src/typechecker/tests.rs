@@ -699,3 +699,76 @@ fn tailrec_calls_other_function_in_tail_position() {
         Type::Int
     );
 }
+
+// ============================================================================
+// Generator Tests
+// ============================================================================
+
+#[test]
+fn generator_simple() {
+    // A simple generator function should type check
+    assert_eq!(
+        check_ok(
+            r#"
+            gen fn counter() -> Int {
+                yield 1;
+                yield 2;
+                yield 3;
+                0
+            }
+            "#
+        ),
+        Type::Generator(Box::new(Type::Int))
+    );
+}
+
+#[test]
+fn generator_with_params() {
+    // Generator with parameters
+    assert_eq!(
+        check_ok(
+            r#"
+            gen fn range(start: Int, end: Int) -> Int {
+                yield start;
+                0
+            }
+            "#
+        ),
+        Type::Generator(Box::new(Type::Int))
+    );
+}
+
+#[test]
+fn yield_outside_generator_error() {
+    // Yield outside of a generator function should fail
+    assert_eq!(
+        check_err("fn not_gen() -> Int { yield 1; 0 }"),
+        TypeErrorKind::YieldOutsideGenerator
+    );
+}
+
+#[test]
+fn yield_type_mismatch_error() {
+    // Yield with wrong type should fail
+    assert!(matches!(
+        check_err("gen fn bad() -> Int { yield true; 0 }"),
+        TypeErrorKind::YieldTypeMismatch { .. }
+    ));
+}
+
+#[test]
+fn generator_bool_type() {
+    // Generator with Bool yield type
+    assert_eq!(
+        check_ok(
+            r#"
+            gen fn bool_gen() -> Bool {
+                yield true;
+                yield false;
+                true
+            }
+            "#
+        ),
+        Type::Generator(Box::new(Type::Bool))
+    );
+}

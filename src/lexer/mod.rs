@@ -41,6 +41,12 @@ pub enum Token {
     #[token("match")]
     Match,
 
+    #[token("yield")]
+    Yield,
+
+    #[token("gen")]
+    Gen,
+
     // Type keywords
     #[token("Int")]
     IntType,

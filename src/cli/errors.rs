@@ -144,6 +144,15 @@ fn report_type_error(filename: &str, source: &str, error: &TypeError) {
                 if *found == 1 { "was" } else { "were" }
             )
         }
+        TypeErrorKind::YieldOutsideGenerator => {
+            "yield expression can only be used inside a generator function (use 'gen fn')".to_string()
+        }
+        TypeErrorKind::YieldTypeMismatch { expected, found } => {
+            format!(
+                "yield expression has type `{}`, but generator expects `{}`",
+                found, expected
+            )
+        }
     };
 
     let title = match &error.kind {
@@ -165,6 +174,8 @@ fn report_type_error(filename: &str, source: &str, error: &TypeError) {
         TypeErrorKind::UnexpectedVariantPayload { .. } => "unexpected variant payload",
         TypeErrorKind::TypeInferenceFailed { .. } => "type inference failed",
         TypeErrorKind::WrongNumberOfTypeArgs { .. } => "wrong number of type arguments",
+        TypeErrorKind::YieldOutsideGenerator => "yield outside generator",
+        TypeErrorKind::YieldTypeMismatch { .. } => "yield type mismatch",
     };
 
     Report::build(ReportKind::Error, filename, error.span.start)

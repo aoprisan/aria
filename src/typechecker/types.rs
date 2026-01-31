@@ -34,6 +34,8 @@ pub enum Type {
         name: String,
         type_args: Vec<Type>,
     },
+    /// Generator type that yields values of type T
+    Generator(Box<Type>),
 }
 
 impl Type {
@@ -85,6 +87,7 @@ impl Type {
                 let args_str: Vec<String> = type_args.iter().map(|t| t.display_name()).collect();
                 format!("{}<{}>", name, args_str.join(", "))
             }
+            Type::Generator(inner) => format!("Generator<{}>", inner.display_name()),
         }
     }
 

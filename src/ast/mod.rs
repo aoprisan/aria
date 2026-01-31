@@ -128,6 +128,8 @@ pub enum Expr {
         variant: String,
         payload: Option<Box<Spanned<Expr>>>,
     },
+    /// Yield expression for generators: `yield value`
+    Yield(Box<Spanned<Expr>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -151,6 +153,8 @@ pub enum Stmt {
         return_ty: Spanned<Type>,
         body: Spanned<Expr>,
         is_tailrec: bool,
+        /// Whether this is a generator function (uses `yield`)
+        is_generator: bool,
     },
     Expr(Spanned<Expr>),
     /// Enum definition: `enum Color { Red, Green, Blue }` or `enum Option<T> { None, Some(T) }`

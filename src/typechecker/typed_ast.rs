@@ -94,6 +94,8 @@ pub enum TypedExprKind {
         variant_index: usize,
         payload: Option<Box<TypedExpr>>,
     },
+    /// Yield expression for generators
+    Yield(Box<TypedExpr>),
 }
 
 /// A typed statement with source location.
