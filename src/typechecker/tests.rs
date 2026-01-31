@@ -20,6 +20,12 @@ fn check(source: &str) -> Result<Type, Vec<TypeErrorKind>> {
                         return_ty.clone()
                     }
                     crate::typechecker::typed_ast::TypedStmtKind::Expr(e) => e.ty.clone(),
+                    crate::typechecker::typed_ast::TypedStmtKind::Enum { name, variants } => {
+                        Type::Enum {
+                            name: name.clone(),
+                            variants: variants.clone(),
+                        }
+                    }
                 })
                 .unwrap_or(Type::Unit)
         })

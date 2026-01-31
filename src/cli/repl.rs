@@ -165,13 +165,26 @@ pub fn run() -> Result<(), i32> {
                     // In a full implementation, we'd also show the value
                     println!("_ : {}", ty);
                 }
+                Stmt::Enum { name, variants } => {
+                    let variant_names: Vec<String> = variants
+                        .iter()
+                        .map(|v| {
+                            if v.node.payload.is_some() {
+                                format!("{}(...)", v.node.name)
+                            } else {
+                                v.node.name.clone()
+                            }
+                        })
+                        .collect();
+                    println!("enum {} {{ {} }}", name, variant_names.join(", "));
+                }
             }
         }
 
-        // Persist only definitions (let and fn), not expression statements
+        // Persist only definitions (let, fn, enum), not expression statements
         for stmt in new_stmts {
             match &stmt.node {
-                Stmt::Let { .. } | Stmt::Fn { .. } => {
+                Stmt::Let { .. } | Stmt::Fn { .. } | Stmt::Enum { .. } => {
                     accumulated_program.stmts.push(stmt.clone());
                 }
                 Stmt::Expr(_) => {
@@ -233,6 +246,19 @@ fn format_stmt(stmt: &Stmt) -> String {
         Stmt::Expr(expr) => {
             format!("{};", format_expr(&expr.node))
         }
+        Stmt::Enum { name, variants } => {
+            let variant_strs: Vec<String> = variants
+                .iter()
+                .map(|v| {
+                    if let Some(payload) = &v.node.payload {
+                        format!("{}({})", v.node.name, type_to_string(&payload.node))
+                    } else {
+                        v.node.name.clone()
+                    }
+                })
+                .collect();
+            format!("enum {} {{ {} }}", name, variant_strs.join(", "))
+        }
     }
 }
 
@@ -282,6 +308,46 @@ fn format_expr(expr: &crate::ast::Expr) -> String {
             s.push('}');
             s
         }
+        crate::ast::Expr::Match { expr, arms } => {
+            let arms_str: Vec<String> = arms
+                .iter()
+                .map(|arm| {
+                    format!(
+                        "{} => {}",
+                        format_pattern(&arm.node.pattern.node),
+                        format_expr(&arm.node.body.node)
+                    )
+                })
+                .collect();
+            format!("match {} {{ {} }}", format_expr(&expr.node), arms_str.join(", "))
+        }
+        crate::ast::Expr::EnumVariant { variant, payload } => {
+            if let Some(p) = payload {
+                format!("{}({})", variant, format_expr(&p.node))
+            } else {
+                variant.clone()
+            }
+        }
+    }
+}
+
+fn format_pattern(pattern: &crate::ast::Pattern) -> String {
+    match pattern {
+        crate::ast::Pattern::Wildcard => "_".to_string(),
+        crate::ast::Pattern::Literal(lit) => match lit {
+            crate::ast::Literal::Integer(n) => n.to_string(),
+            crate::ast::Literal::Float(f) => f.to_string(),
+            crate::ast::Literal::String(s) => format!("\"{}\"", s),
+            crate::ast::Literal::Bool(b) => b.to_string(),
+        },
+        crate::ast::Pattern::Ident(name) => name.clone(),
+        crate::ast::Pattern::Variant { name, payload } => {
+            if let Some(p) = payload {
+                format!("{}({})", name, format_pattern(&p.node))
+            } else {
+                name.clone()
+            }
+        }
     }
 }
 
@@ -301,12 +367,13 @@ fn op_to_string(op: crate::ast::BinOp) -> &'static str {
     }
 }
 
-fn type_to_string(ty: &crate::ast::Type) -> &'static str {
+fn type_to_string(ty: &crate::ast::Type) -> String {
     match ty {
-        crate::ast::Type::Int => "Int",
-        crate::ast::Type::Float => "Float",
-        crate::ast::Type::String => "String",
-        crate::ast::Type::Bool => "Bool",
+        crate::ast::Type::Int => "Int".to_string(),
+        crate::ast::Type::Float => "Float".to_string(),
+        crate::ast::Type::String => "String".to_string(),
+        crate::ast::Type::Bool => "Bool".to_string(),
+        crate::ast::Type::Named(name) => name.clone(),
     }
 }
 
@@ -335,7 +402,7 @@ fn print_env(program: &Program) {
                 let ty_str = ty
                     .as_ref()
                     .map(|t| type_to_string(&t.node))
-                    .unwrap_or("(inferred)");
+                    .unwrap_or_else(|| "(inferred)".to_string());
                 println!("let {} : {}", name, ty_str);
             }
             Stmt::Fn {
@@ -357,6 +424,19 @@ fn print_env(program: &Program) {
             }
             Stmt::Expr(_) => {
                 // Expression statements aren't persisted, but handle for completeness
+            }
+            Stmt::Enum { name, variants } => {
+                let variant_names: Vec<String> = variants
+                    .iter()
+                    .map(|v| {
+                        if let Some(payload) = &v.node.payload {
+                            format!("{}({})", v.node.name, type_to_string(&payload.node))
+                        } else {
+                            v.node.name.clone()
+                        }
+                    })
+                    .collect();
+                println!("enum {} {{ {} }}", name, variant_names.join(", "));
             }
         }
     }

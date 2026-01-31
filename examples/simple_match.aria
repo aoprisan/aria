@@ -1,0 +1,13 @@
+// Simple match test
+enum Color { Red, Green, Blue }
+
+fn color_value(c: Color) -> Int {
+    match c {
+        Red => 1,
+        Green => 2,
+        Blue => 3,
+    }
+}
+
+let result = color_value(Red);
+result;

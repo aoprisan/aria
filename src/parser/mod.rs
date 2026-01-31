@@ -2,7 +2,7 @@ use std::iter::Peekable;
 
 use logos::Span;
 
-use crate::ast::{BinOp, Expr, Literal, Param, Program, Spanned, Stmt, Type};
+use crate::ast::{BinOp, EnumVariant, Expr, Literal, MatchArm, Param, Pattern, Program, Spanned, Stmt, Type};
 use crate::lexer::{Lexer, Token};
 
 #[cfg(test)]
@@ -164,6 +164,7 @@ impl<'source> Parser<'source> {
                 self.expect(Token::Fn)?;
                 self.parse_fn_stmt_inner(true, start_span)
             }
+            Some(Ok(Token::Enum)) => self.parse_enum_stmt(),
             Some(Ok(_)) => self.parse_expr_stmt(),
             Some(Err(())) => {
                 let (_, span) = self.advance().unwrap();
@@ -262,14 +263,16 @@ impl<'source> Parser<'source> {
             Some((Ok(Token::FloatType), span)) => Ok(Spanned::new(Type::Float, span)),
             Some((Ok(Token::StringType), span)) => Ok(Spanned::new(Type::String, span)),
             Some((Ok(Token::BoolType), span)) => Ok(Spanned::new(Type::Bool, span)),
+            // Named types (e.g., enum types like `Option` or `Color`)
+            Some((Ok(Token::Ident(name)), span)) => Ok(Spanned::new(Type::Named(name), span)),
             Some((Ok(tok), span)) => Err(ParseError::unexpected_token(
-                vec!["Int", "Float", "String", "Bool"],
+                vec!["Int", "Float", "String", "Bool", "type name"],
                 Some(tok),
                 span,
             )),
             Some((Err(()), span)) => Err(ParseError::lexer_error(span)),
             None => Err(ParseError::unexpected_eof(
-                vec!["Int", "Float", "String", "Bool"],
+                vec!["Int", "Float", "String", "Bool", "type name"],
                 self.current_span.clone(),
             )),
         }
@@ -334,6 +337,7 @@ impl<'source> Parser<'source> {
             Some(Ok(Token::LParen)) => self.parse_grouped_expr(),
             Some(Ok(Token::LBrace)) => self.parse_block_expr(),
             Some(Ok(Token::If)) => self.parse_if_expr(),
+            Some(Ok(Token::Match)) => self.parse_match_expr(),
             Some(Ok(_)) => {
                 let (tok, span) = self.advance().unwrap();
                 Err(ParseError::unexpected_token(
@@ -449,9 +453,9 @@ impl<'source> Parser<'source> {
             }
 
             // Try to parse a statement
-            // Peek to see if this is a let or fn statement
+            // Peek to see if this is a let, fn, tailrec, or enum statement
             match self.peek_token() {
-                Some(Ok(Token::Let)) | Some(Ok(Token::Fn)) => {
+                Some(Ok(Token::Let)) | Some(Ok(Token::Fn)) | Some(Ok(Token::Tailrec)) | Some(Ok(Token::Enum)) => {
                     stmts.push(self.parse_stmt()?);
                 }
                 _ => {
@@ -521,5 +525,194 @@ impl<'source> Parser<'source> {
             },
             span,
         ))
+    }
+
+    /// Parse an enum definition: `enum Color { Red, Green, Blue }`
+    /// or with payloads: `enum Option { None, Some(Int) }`
+    fn parse_enum_stmt(&mut self) -> ParseResult<Spanned<Stmt>> {
+        let start_span = self.expect(Token::Enum)?;
+        let (name, _) = self.expect_ident()?;
+        self.expect(Token::LBrace)?;
+
+        let mut variants = Vec::new();
+
+        // Check for empty enum
+        if !matches!(self.peek_token(), Some(Ok(Token::RBrace))) {
+            loop {
+                let (variant_name, variant_span_start) = self.expect_ident()?;
+
+                // Check for payload type
+                let payload = if matches!(self.peek_token(), Some(Ok(Token::LParen))) {
+                    self.advance(); // consume '('
+                    let payload_ty = self.parse_type()?;
+                    self.expect(Token::RParen)?;
+                    Some(payload_ty)
+                } else {
+                    None
+                };
+
+                let variant_span = variant_span_start.start..self.current_span.end;
+                variants.push(Spanned::new(
+                    EnumVariant {
+                        name: variant_name,
+                        payload,
+                    },
+                    variant_span,
+                ));
+
+                match self.peek_token() {
+                    Some(Ok(Token::Comma)) => {
+                        self.advance();
+                        // Allow trailing comma
+                        if matches!(self.peek_token(), Some(Ok(Token::RBrace))) {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+        }
+
+        let end_span = self.expect(Token::RBrace)?;
+        let span = start_span.start..end_span.end;
+        Ok(Spanned::new(Stmt::Enum { name, variants }, span))
+    }
+
+    /// Parse a match expression: `match expr { pat => body, ... }`
+    fn parse_match_expr(&mut self) -> ParseResult<Spanned<Expr>> {
+        let start_span = self.expect(Token::Match)?;
+        let expr = self.parse_expr()?;
+        self.expect(Token::LBrace)?;
+
+        let mut arms = Vec::new();
+
+        // Parse match arms
+        while !matches!(self.peek_token(), Some(Ok(Token::RBrace))) {
+            let pattern = self.parse_pattern()?;
+            self.expect(Token::FatArrow)?;
+            let body = self.parse_expr()?;
+
+            let arm_span = pattern.span.start..body.span.end;
+            arms.push(Spanned::new(MatchArm { pattern, body }, arm_span));
+
+            // Optional comma between arms
+            if matches!(self.peek_token(), Some(Ok(Token::Comma))) {
+                self.advance();
+            }
+
+            // Check for end of match
+            if matches!(self.peek_token(), Some(Ok(Token::RBrace))) {
+                break;
+            }
+        }
+
+        let end_span = self.expect(Token::RBrace)?;
+        let span = start_span.start..end_span.end;
+        Ok(Spanned::new(
+            Expr::Match {
+                expr: Box::new(expr),
+                arms,
+            },
+            span,
+        ))
+    }
+
+    /// Parse a pattern for match expressions
+    fn parse_pattern(&mut self) -> ParseResult<Spanned<Pattern>> {
+        match self.peek_token() {
+            // Wildcard pattern: `_`
+            Some(Ok(Token::Underscore)) => {
+                let (_, span) = self.advance().unwrap();
+                Ok(Spanned::new(Pattern::Wildcard, span))
+            }
+            // Literal patterns
+            Some(Ok(Token::Integer(_))) => {
+                let (tok, span) = self.advance().unwrap();
+                if let Ok(Token::Integer(n)) = tok {
+                    Ok(Spanned::new(Pattern::Literal(Literal::Integer(n)), span))
+                } else {
+                    unreachable!()
+                }
+            }
+            Some(Ok(Token::Float(_))) => {
+                let (tok, span) = self.advance().unwrap();
+                if let Ok(Token::Float(f)) = tok {
+                    Ok(Spanned::new(Pattern::Literal(Literal::Float(f)), span))
+                } else {
+                    unreachable!()
+                }
+            }
+            Some(Ok(Token::String(_))) => {
+                let (tok, span) = self.advance().unwrap();
+                if let Ok(Token::String(s)) = tok {
+                    Ok(Spanned::new(Pattern::Literal(Literal::String(s)), span))
+                } else {
+                    unreachable!()
+                }
+            }
+            Some(Ok(Token::True)) => {
+                let (_, span) = self.advance().unwrap();
+                Ok(Spanned::new(Pattern::Literal(Literal::Bool(true)), span))
+            }
+            Some(Ok(Token::False)) => {
+                let (_, span) = self.advance().unwrap();
+                Ok(Spanned::new(Pattern::Literal(Literal::Bool(false)), span))
+            }
+            // Identifier pattern (variable binding) or enum variant pattern
+            Some(Ok(Token::Ident(_))) => {
+                let (tok, start_span) = self.advance().unwrap();
+                let name = if let Ok(Token::Ident(n)) = tok {
+                    n
+                } else {
+                    unreachable!()
+                };
+
+                // Check if this is an enum variant with payload: `Some(x)`
+                if matches!(self.peek_token(), Some(Ok(Token::LParen))) {
+                    self.advance(); // consume '('
+                    let inner_pattern = self.parse_pattern()?;
+                    let end_span = self.expect(Token::RParen)?;
+                    let span = start_span.start..end_span.end;
+                    Ok(Spanned::new(
+                        Pattern::Variant {
+                            name,
+                            payload: Some(Box::new(inner_pattern)),
+                        },
+                        span,
+                    ))
+                } else {
+                    // Could be either a variable binding or a unit variant
+                    // We'll treat uppercase starting names as variants, lowercase as bindings
+                    // This is a simple heuristic; a more robust solution would use context
+                    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                        Ok(Spanned::new(
+                            Pattern::Variant {
+                                name,
+                                payload: None,
+                            },
+                            start_span,
+                        ))
+                    } else {
+                        Ok(Spanned::new(Pattern::Ident(name), start_span))
+                    }
+                }
+            }
+            Some(Ok(_)) => {
+                let (tok, span) = self.advance().unwrap();
+                Err(ParseError::unexpected_token(
+                    vec!["pattern"],
+                    tok.ok(),
+                    span,
+                ))
+            }
+            Some(Err(())) => {
+                let (_, span) = self.advance().unwrap();
+                Err(ParseError::lexer_error(span))
+            }
+            None => Err(ParseError::unexpected_eof(
+                vec!["pattern"],
+                self.current_span.clone(),
+            )),
+        }
     }
 }

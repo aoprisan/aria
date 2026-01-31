@@ -35,6 +35,27 @@ pub enum TypeErrorKind {
 
     /// Recursive call in tailrec function is not in tail position.
     NotTailRecursive { func_name: String },
+
+    /// Referenced an undefined enum type.
+    UndefinedEnum { name: String },
+
+    /// Referenced an undefined enum variant.
+    UndefinedVariant { enum_name: String, variant_name: String },
+
+    /// Match arms have different types.
+    MatchArmTypeMismatch { first_ty: Type, arm_ty: Type },
+
+    /// Match expression is not exhaustive.
+    NonExhaustiveMatch { missing_variants: Vec<String> },
+
+    /// Pattern doesn't match the expected type.
+    PatternTypeMismatch { expected: Type, found: Type },
+
+    /// Variant expects a payload but none was provided.
+    MissingVariantPayload { variant_name: String },
+
+    /// Variant doesn't expect a payload but one was provided.
+    UnexpectedVariantPayload { variant_name: String },
 }
 
 /// A type error with source location information.
@@ -84,6 +105,40 @@ impl TypeError {
     pub fn not_tail_recursive(func_name: String, span: Span) -> Self {
         TypeError::new(TypeErrorKind::NotTailRecursive { func_name }, span)
     }
+
+    pub fn undefined_enum(name: String, span: Span) -> Self {
+        TypeError::new(TypeErrorKind::UndefinedEnum { name }, span)
+    }
+
+    pub fn undefined_variant(enum_name: String, variant_name: String, span: Span) -> Self {
+        TypeError::new(
+            TypeErrorKind::UndefinedVariant {
+                enum_name,
+                variant_name,
+            },
+            span,
+        )
+    }
+
+    pub fn match_arm_mismatch(first_ty: Type, arm_ty: Type, span: Span) -> Self {
+        TypeError::new(TypeErrorKind::MatchArmTypeMismatch { first_ty, arm_ty }, span)
+    }
+
+    pub fn non_exhaustive_match(missing_variants: Vec<String>, span: Span) -> Self {
+        TypeError::new(TypeErrorKind::NonExhaustiveMatch { missing_variants }, span)
+    }
+
+    pub fn pattern_type_mismatch(expected: Type, found: Type, span: Span) -> Self {
+        TypeError::new(TypeErrorKind::PatternTypeMismatch { expected, found }, span)
+    }
+
+    pub fn missing_variant_payload(variant_name: String, span: Span) -> Self {
+        TypeError::new(TypeErrorKind::MissingVariantPayload { variant_name }, span)
+    }
+
+    pub fn unexpected_variant_payload(variant_name: String, span: Span) -> Self {
+        TypeError::new(TypeErrorKind::UnexpectedVariantPayload { variant_name }, span)
+    }
 }
 
 impl fmt::Display for TypeError {
@@ -131,6 +186,54 @@ impl fmt::Display for TypeError {
                     f,
                     "recursive call to '{}' is not in tail position",
                     func_name
+                )
+            }
+            TypeErrorKind::UndefinedEnum { name } => {
+                write!(f, "undefined enum type '{}'", name)
+            }
+            TypeErrorKind::UndefinedVariant {
+                enum_name,
+                variant_name,
+            } => {
+                write!(
+                    f,
+                    "enum '{}' has no variant named '{}'",
+                    enum_name, variant_name
+                )
+            }
+            TypeErrorKind::MatchArmTypeMismatch { first_ty, arm_ty } => {
+                write!(
+                    f,
+                    "match arm has type {}, but first arm has type {}",
+                    arm_ty, first_ty
+                )
+            }
+            TypeErrorKind::NonExhaustiveMatch { missing_variants } => {
+                write!(
+                    f,
+                    "non-exhaustive match: missing variants {:?}",
+                    missing_variants
+                )
+            }
+            TypeErrorKind::PatternTypeMismatch { expected, found } => {
+                write!(
+                    f,
+                    "pattern has type {}, but expected {}",
+                    found, expected
+                )
+            }
+            TypeErrorKind::MissingVariantPayload { variant_name } => {
+                write!(
+                    f,
+                    "variant '{}' expects a payload, but none was provided",
+                    variant_name
+                )
+            }
+            TypeErrorKind::UnexpectedVariantPayload { variant_name } => {
+                write!(
+                    f,
+                    "variant '{}' does not expect a payload",
+                    variant_name
                 )
             }
         }

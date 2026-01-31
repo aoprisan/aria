@@ -8,7 +8,10 @@ use wasm_encoder::{
 };
 
 use crate::ast::{BinOp, Literal};
-use crate::typechecker::typed_ast::{TypedExpr, TypedExprKind, TypedProgram, TypedStmt, TypedStmtKind};
+use crate::typechecker::typed_ast::{
+    TypedExpr, TypedExprKind, TypedMatchArm, TypedPattern, TypedPatternKind, TypedProgram,
+    TypedStmt, TypedStmtKind,
+};
 use crate::typechecker::types::Type;
 
 use self::error::CodeGenError;
@@ -19,6 +22,8 @@ pub struct CodeGen {
     functions: HashMap<String, u32>,
     /// Maps variable names to their local indices (per-function).
     locals: HashMap<String, u32>,
+    /// Tracks the type of each local variable by index.
+    local_types: Vec<ValType>,
     /// Tracks the next available local index.
     next_local: u32,
     /// Accumulated function types (signatures).
@@ -54,6 +59,7 @@ impl CodeGen {
         CodeGen {
             functions: HashMap::new(),
             locals: HashMap::new(),
+            local_types: Vec::new(),
             next_local: 0,
             function_types: Vec::new(),
             type_indices: HashMap::new(),
@@ -153,6 +159,10 @@ impl CodeGen {
             Type::Function { .. } => {
                 Err(CodeGenError::UnsupportedType("Function".to_string()))
             }
+            // Enums are represented as i64:
+            // - Lower 32 bits: tag (variant index)
+            // - Upper 32 bits: payload (for variants with i32 payload)
+            Type::Enum { .. } => Ok(ValType::I64),
         }
     }
 
@@ -172,12 +182,14 @@ impl CodeGen {
     ) -> Result<(), CodeGenError> {
         // Reset local state for this function
         self.locals.clear();
+        self.local_types.clear();
         self.next_local = 0;
 
         // Parameters are the first locals
-        for (param_name, _) in params {
+        for (param_name, param_ty) in params {
             let idx = self.next_local;
             self.locals.insert(param_name.clone(), idx);
+            self.local_types.push(self.type_to_valtype(param_ty)?);
             self.next_local += 1;
         }
 
@@ -218,14 +230,26 @@ impl CodeGen {
         instructions.push(Instruction::End); // end function
 
         // Collect locals that were allocated beyond parameters
-        let num_params = params.len() as u32;
-        let extra_locals = if self.next_local > num_params {
-            // For simplicity, declare all extra locals as i32
-            // In a more sophisticated implementation, we'd track types
-            vec![(self.next_local - num_params, ValType::I32)]
-        } else {
-            vec![]
-        };
+        let num_params = params.len();
+        let mut extra_locals: Vec<(u32, ValType)> = Vec::new();
+
+        // Group locals by type for efficient encoding
+        let extra_local_types: Vec<ValType> = self.local_types[num_params..].to_vec();
+        if !extra_local_types.is_empty() {
+            let mut current_type = extra_local_types[0];
+            let mut count = 1u32;
+
+            for ty in extra_local_types.iter().skip(1) {
+                if *ty == current_type {
+                    count += 1;
+                } else {
+                    extra_locals.push((count, current_type));
+                    current_type = *ty;
+                    count = 1;
+                }
+            }
+            extra_locals.push((count, current_type));
+        }
 
         self.compiled_functions.push(CompiledFunction {
             locals: extra_locals,
@@ -235,9 +259,26 @@ impl CodeGen {
         Ok(())
     }
 
+    /// Allocate a new local variable with the given type
+    fn alloc_local(&mut self, ty: ValType) -> u32 {
+        let idx = self.next_local;
+        self.local_types.push(ty);
+        self.next_local += 1;
+        idx
+    }
+
+    /// Allocate a local for a named variable with the given Aria type
+    fn alloc_named_local(&mut self, name: &str, ty: &Type) -> Result<u32, CodeGenError> {
+        let valtype = self.type_to_valtype(ty)?;
+        let idx = self.alloc_local(valtype);
+        self.locals.insert(name.to_string(), idx);
+        Ok(idx)
+    }
+
     fn compile_main(&mut self, program: &TypedProgram) -> Result<(), CodeGenError> {
         // Reset local state
         self.locals.clear();
+        self.local_types.clear();
         self.next_local = 0;
 
         let mut instructions = Vec::new();
@@ -245,18 +286,16 @@ impl CodeGen {
 
         for stmt in &program.stmts {
             match &stmt.kind {
-                TypedStmtKind::Fn { .. } => {
-                    // Skip function definitions, already compiled
+                TypedStmtKind::Fn { .. } | TypedStmtKind::Enum { .. } => {
+                    // Skip function and enum definitions, already handled
                 }
-                TypedStmtKind::Let { name, value, .. } => {
+                TypedStmtKind::Let { name, ty, value } => {
                     // Generate value
                     let value_instrs = self.gen_expr(value)?;
                     instructions.extend(value_instrs);
 
-                    // Allocate local
-                    let idx = self.next_local;
-                    self.locals.insert(name.clone(), idx);
-                    self.next_local += 1;
+                    // Allocate local with correct type
+                    let idx = self.alloc_named_local(name, ty)?;
 
                     // Store in local
                     instructions.push(Instruction::LocalSet(idx));
@@ -280,18 +319,33 @@ impl CodeGen {
         } else if last_expr_type == Type::Float {
             // Convert f64 to i32 by truncation
             instructions.push(Instruction::I32TruncF64S);
+        } else if matches!(last_expr_type, Type::Enum { .. }) {
+            // Convert i64 to i32 by wrap
+            instructions.push(Instruction::I32WrapI64);
         }
 
         instructions.push(Instruction::End);
 
-        let locals = if self.next_local > 0 {
-            vec![(self.next_local, ValType::I32)]
-        } else {
-            vec![]
-        };
+        // Generate locals with proper types
+        let mut extra_locals: Vec<(u32, ValType)> = Vec::new();
+        if !self.local_types.is_empty() {
+            let mut current_type = self.local_types[0];
+            let mut count = 1u32;
+
+            for ty in self.local_types.iter().skip(1) {
+                if *ty == current_type {
+                    count += 1;
+                } else {
+                    extra_locals.push((count, current_type));
+                    current_type = *ty;
+                    count = 1;
+                }
+            }
+            extra_locals.push((count, current_type));
+        }
 
         self.compiled_functions.push(CompiledFunction {
-            locals,
+            locals: extra_locals,
             instructions,
         });
 
@@ -316,6 +370,14 @@ impl CodeGen {
             TypedExprKind::Block { stmts, expr: final_expr } => {
                 self.gen_block(stmts, final_expr.as_deref(), &expr.ty)
             }
+            TypedExprKind::Match { expr: match_expr, arms } => {
+                self.gen_match(match_expr, arms, &expr.ty)
+            }
+            TypedExprKind::EnumVariant {
+                variant_index,
+                payload,
+                ..
+            } => self.gen_enum_variant(*variant_index, payload.as_deref()),
         }
     }
 
@@ -452,8 +514,8 @@ impl CodeGen {
         // Step 1: Evaluate args and store in temps
         for arg in args {
             instrs.extend(self.gen_expr(arg)?);
-            let temp_idx = self.next_local;
-            self.next_local += 1;
+            let valtype = self.type_to_valtype(&arg.ty)?;
+            let temp_idx = self.alloc_local(valtype);
             temp_locals.push(temp_idx);
             instrs.push(Instruction::LocalSet(temp_idx));
         }
@@ -534,13 +596,11 @@ impl CodeGen {
 
     fn gen_stmt(&mut self, stmt: &TypedStmt) -> Result<Vec<Instruction<'static>>, CodeGenError> {
         match &stmt.kind {
-            TypedStmtKind::Let { name, value, .. } => {
+            TypedStmtKind::Let { name, ty, value } => {
                 let mut instrs = self.gen_expr(value)?;
 
-                // Allocate local
-                let idx = self.next_local;
-                self.locals.insert(name.clone(), idx);
-                self.next_local += 1;
+                // Allocate local with correct type
+                let idx = self.alloc_named_local(name, ty)?;
 
                 instrs.push(Instruction::LocalSet(idx));
                 Ok(instrs)
@@ -561,7 +621,257 @@ impl CodeGen {
 
                 Ok(instrs)
             }
+            TypedStmtKind::Enum { .. } => {
+                // Enum definitions don't generate any code
+                Ok(vec![])
+            }
         }
+    }
+
+    /// Generate code for an enum variant constructor
+    /// Enum values are represented as i64:
+    /// - Lower 32 bits: tag (variant index)
+    /// - Upper 32 bits: payload (for variants with i32 payload)
+    fn gen_enum_variant(
+        &mut self,
+        variant_index: usize,
+        payload: Option<&TypedExpr>,
+    ) -> Result<Vec<Instruction<'static>>, CodeGenError> {
+        let mut instrs = Vec::new();
+
+        match payload {
+            None => {
+                // Unit variant: just the tag as i64
+                instrs.push(Instruction::I64Const(variant_index as i64));
+            }
+            Some(payload_expr) => {
+                // Variant with payload
+                // Result = (payload << 32) | tag
+                match &payload_expr.ty {
+                    Type::Int | Type::Bool => {
+                        // Generate payload (should produce i32)
+                        instrs.extend(self.gen_expr(payload_expr)?);
+                        // Extend to i64
+                        instrs.push(Instruction::I64ExtendI32U);
+                        // Shift left by 32
+                        instrs.push(Instruction::I64Const(32));
+                        instrs.push(Instruction::I64Shl);
+                        // OR with tag
+                        instrs.push(Instruction::I64Const(variant_index as i64));
+                        instrs.push(Instruction::I64Or);
+                    }
+                    Type::Enum { .. } => {
+                        // Nested enum: payload is already i64
+                        // We need to shift it and combine with our tag
+                        // For simplicity, we'll just error for now
+                        return Err(CodeGenError::UnsupportedFeature(
+                            "nested enum payloads".to_string(),
+                        ));
+                    }
+                    _ => {
+                        return Err(CodeGenError::UnsupportedType(format!(
+                            "enum payload type: {}",
+                            payload_expr.ty
+                        )));
+                    }
+                }
+            }
+        }
+
+        Ok(instrs)
+    }
+
+    /// Generate code for a match expression
+    fn gen_match(
+        &mut self,
+        expr: &TypedExpr,
+        arms: &[TypedMatchArm],
+        result_ty: &Type,
+    ) -> Result<Vec<Instruction<'static>>, CodeGenError> {
+        let mut instrs = Vec::new();
+
+        // Generate the match expression and store in a temp local
+        instrs.extend(self.gen_expr(expr)?);
+        let match_val_local = self.alloc_local(ValType::I64);
+        instrs.push(Instruction::LocalSet(match_val_local));
+
+        // Extract the tag (lower 32 bits of i64)
+        instrs.push(Instruction::LocalGet(match_val_local));
+        instrs.push(Instruction::I32WrapI64);
+        let tag_local = self.alloc_local(ValType::I32);
+        instrs.push(Instruction::LocalSet(tag_local));
+
+        // Determine block type for the result
+        let block_type = match result_ty {
+            Type::Unit => BlockType::Empty,
+            Type::Int | Type::Bool => BlockType::Result(ValType::I32),
+            Type::Float => BlockType::Result(ValType::F64),
+            Type::Enum { .. } => BlockType::Result(ValType::I64),
+            _ => {
+                return Err(CodeGenError::UnsupportedType(format!(
+                    "match result type: {}",
+                    result_ty
+                )));
+            }
+        };
+
+        // Track control flow depth for tailrec
+        if let Some(ref mut ctx) = self.tailrec_context {
+            ctx.control_depth += 1;
+        }
+
+        // Generate nested if-else chain for pattern matching
+        // We'll generate:
+        //   block $match_result
+        //     block $arm_0
+        //       block $arm_1
+        //         ...
+        //         br_table $arm_0 $arm_1 ... (based on tag)
+        //       end $arm_1
+        //       <arm 1 body>
+        //       br $match_result
+        //     end $arm_0
+        //     <arm 0 body>
+        //     br $match_result
+        //   end $match_result
+
+        // For simplicity, let's use a chain of if-else instead
+        // This is less efficient but easier to implement
+
+        // Start outer block for result
+        instrs.push(Instruction::Block(block_type));
+
+        // Generate a chain of if-else for pattern matching
+        // For each arm, check the condition, execute body if match, else continue to next
+        let mut if_count = 0;
+
+        for (i, arm) in arms.iter().enumerate() {
+            let is_last_arm = i == arms.len() - 1;
+
+            match &arm.pattern.kind {
+                TypedPatternKind::Wildcard => {
+                    // Wildcard matches everything - just generate the body
+                    instrs.extend(self.gen_pattern_bindings(&arm.pattern, match_val_local)?);
+                    instrs.extend(self.gen_expr(&arm.body)?);
+                    // Wildcard/catchall should be the last arm
+                }
+                TypedPatternKind::Ident(_) => {
+                    // Variable binding also matches everything
+                    instrs.extend(self.gen_pattern_bindings(&arm.pattern, match_val_local)?);
+                    instrs.extend(self.gen_expr(&arm.body)?);
+                    // Variable binding should typically be the last arm
+                }
+                TypedPatternKind::Variant { variant_index, .. } => {
+                    // Check if tag matches this variant
+                    instrs.push(Instruction::LocalGet(tag_local));
+                    instrs.push(Instruction::I32Const(*variant_index as i32));
+                    instrs.push(Instruction::I32Eq);
+                    instrs.push(Instruction::If(block_type));
+                    if_count += 1;
+                    instrs.extend(self.gen_pattern_bindings(&arm.pattern, match_val_local)?);
+                    instrs.extend(self.gen_expr(&arm.body)?);
+                    if !is_last_arm {
+                        instrs.push(Instruction::Else);
+                    } else {
+                        // For typed if blocks, we need an else branch
+                        // Use Unreachable since this shouldn't happen for exhaustive matches
+                        instrs.push(Instruction::Else);
+                        instrs.push(Instruction::Unreachable);
+                        instrs.push(Instruction::End);
+                        if_count -= 1;
+                    }
+                }
+                TypedPatternKind::Literal(lit) => {
+                    // Check if value matches the literal
+                    instrs.push(Instruction::LocalGet(match_val_local));
+                    instrs.push(Instruction::I32WrapI64); // Get the value part
+                    instrs.extend(self.gen_literal(lit)?);
+                    instrs.push(Instruction::I32Eq);
+                    instrs.push(Instruction::If(block_type));
+                    if_count += 1;
+                    instrs.extend(self.gen_expr(&arm.body)?);
+                    if !is_last_arm {
+                        instrs.push(Instruction::Else);
+                    } else {
+                        // For typed if blocks, we need an else branch
+                        instrs.push(Instruction::Else);
+                        instrs.push(Instruction::Unreachable);
+                        instrs.push(Instruction::End);
+                        if_count -= 1;
+                    }
+                }
+            }
+        }
+
+        // Close remaining if-else blocks (those that had else branches)
+        // The value from the innermost if-else propagates up as the result
+        for _ in 0..if_count {
+            instrs.push(Instruction::End);
+        }
+
+        // Close outer block
+        instrs.push(Instruction::End);
+
+        // Restore control flow depth
+        if let Some(ref mut ctx) = self.tailrec_context {
+            ctx.control_depth -= 1;
+        }
+
+        Ok(instrs)
+    }
+
+    /// Generate code for pattern bindings (extracting payload and binding variables)
+    fn gen_pattern_bindings(
+        &mut self,
+        pattern: &TypedPattern,
+        match_val_local: u32,
+    ) -> Result<Vec<Instruction<'static>>, CodeGenError> {
+        let mut instrs = Vec::new();
+
+        match &pattern.kind {
+            TypedPatternKind::Wildcard => {
+                // No bindings
+            }
+            TypedPatternKind::Literal(_) => {
+                // No bindings
+            }
+            TypedPatternKind::Ident(name) => {
+                // Bind the entire match value to this variable
+                instrs.push(Instruction::LocalGet(match_val_local));
+
+                let var_local = self.alloc_local(ValType::I64);
+                self.locals.insert(name.clone(), var_local);
+                instrs.push(Instruction::LocalSet(var_local));
+            }
+            TypedPatternKind::Variant { payload, .. } => {
+                if let Some(inner_pattern) = payload {
+                    // Extract payload (upper 32 bits of i64)
+                    instrs.push(Instruction::LocalGet(match_val_local));
+                    instrs.push(Instruction::I64Const(32));
+                    instrs.push(Instruction::I64ShrU);
+                    instrs.push(Instruction::I32WrapI64);
+
+                    // Bind according to inner pattern
+                    match &inner_pattern.kind {
+                        TypedPatternKind::Ident(name) => {
+                            let var_local = self.alloc_local(ValType::I32);
+                            self.locals.insert(name.clone(), var_local);
+                            instrs.push(Instruction::LocalSet(var_local));
+                        }
+                        TypedPatternKind::Wildcard => {
+                            instrs.push(Instruction::Drop);
+                        }
+                        _ => {
+                            return Err(CodeGenError::UnsupportedFeature(
+                                "nested patterns in enum payloads".to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(instrs)
     }
 
     fn build_module(&self) -> Vec<u8> {

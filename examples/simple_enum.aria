@@ -1,0 +1,8 @@
+// Simple enum test
+enum Color { Red, Green, Blue }
+
+let red = Red;
+let green = Green;
+let blue = Blue;
+
+0;

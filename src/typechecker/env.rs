@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::types::Type;
+use super::types::{EnumVariantDef, Type};
 
 /// Environment for tracking variable bindings across scopes.
 #[derive(Debug, Clone)]
@@ -8,12 +8,15 @@ pub struct Env {
     /// Stack of scopes, from outermost to innermost.
     /// Each scope maps variable names to their types.
     scopes: Vec<HashMap<String, Type>>,
+    /// Registered enum types (name -> full enum type with variants)
+    enums: HashMap<String, Type>,
 }
 
 impl Env {
     pub fn new() -> Self {
         Env {
             scopes: vec![HashMap::new()],
+            enums: HashMap::new(),
         }
     }
 
@@ -58,6 +61,53 @@ impl Env {
             .last()
             .map(|s| s.contains_key(name))
             .unwrap_or(false)
+    }
+
+    /// Register an enum type.
+    /// Returns false if an enum with this name already exists.
+    pub fn define_enum(&mut self, name: String, enum_type: Type) -> bool {
+        if self.enums.contains_key(&name) {
+            false
+        } else {
+            self.enums.insert(name, enum_type);
+            true
+        }
+    }
+
+    /// Look up an enum type by name.
+    pub fn lookup_enum(&self, name: &str) -> Option<&Type> {
+        self.enums.get(name)
+    }
+
+    /// Look up an enum variant by variant name.
+    /// Returns (enum_name, variant_index, variant_def) if found.
+    pub fn lookup_variant(&self, variant_name: &str) -> Option<(&str, usize, &EnumVariantDef)> {
+        for (enum_name, ty) in &self.enums {
+            if let Type::Enum { variants, .. } = ty {
+                for (idx, variant) in variants.iter().enumerate() {
+                    if variant.name == variant_name {
+                        return Some((enum_name, idx, variant));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Resolve a named type to its full enum type (if it's an enum).
+    pub fn resolve_type(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Enum { name, variants } if variants.is_empty() => {
+                // This is a placeholder type from Type::from_ast
+                // Try to resolve it to the full enum type
+                if let Some(full_type) = self.lookup_enum(name) {
+                    full_type.clone()
+                } else {
+                    ty.clone()
+                }
+            }
+            _ => ty.clone(),
+        }
     }
 }
 
