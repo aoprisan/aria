@@ -653,3 +653,39 @@ fn non_tailrec_allows_non_tail_calls() {
         Type::Int
     );
 }
+
+#[test]
+fn tailrec_mutual_recursion() {
+    // Mutually recursive functions with tailrec annotation
+    assert_eq!(
+        check_ok(
+            r#"
+            tailrec fn isEven(n: Int) -> Bool {
+                if n == 0 { true } else { isOdd(n - 1) }
+            }
+            tailrec fn isOdd(n: Int) -> Bool {
+                if n == 0 { false } else { isEven(n - 1) }
+            }
+            let x = isEven(10);
+            "#
+        ),
+        Type::Bool
+    );
+}
+
+#[test]
+fn tailrec_calls_other_function_in_tail_position() {
+    // Calls to other functions in tail position are allowed
+    assert_eq!(
+        check_ok(
+            r#"
+            tailrec fn foo(n: Int) -> Int {
+                if n == 0 { 0 } else { bar(n - 1) }
+            }
+            fn bar(n: Int) -> Int { n }
+            let x = foo(5);
+            "#
+        ),
+        Type::Int
+    );
+}

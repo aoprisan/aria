@@ -380,6 +380,7 @@ impl TypeChecker {
                     TypedExprKind::Call {
                         callee: callee.to_string(),
                         args: typed_args,
+                        is_tail_call: in_tail_position,
                     },
                     *ret,
                     span,
@@ -567,6 +568,7 @@ impl TypeChecker {
                     TypedExprKind::Call {
                         callee: callee.to_string(),
                         args: typed_args,
+                        is_tail_call: false, // Non-tailrec context
                     },
                     *ret,
                     span,

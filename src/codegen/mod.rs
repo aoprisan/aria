@@ -305,7 +305,9 @@ impl CodeGen {
             TypedExprKind::Binary { op, left, right } => {
                 self.gen_binary(*op, left, right, &expr.ty)
             }
-            TypedExprKind::Call { callee, args } => self.gen_call(callee, args),
+            TypedExprKind::Call { callee, args, is_tail_call } => {
+                self.gen_call(callee, args, *is_tail_call)
+            }
             TypedExprKind::If {
                 condition,
                 then_branch,
@@ -390,20 +392,20 @@ impl CodeGen {
         &mut self,
         callee: &str,
         args: &[TypedExpr],
+        is_tail_call: bool,
     ) -> Result<Vec<Instruction<'static>>, CodeGenError> {
-        // Check if this is a tail recursive call
-        let is_tail_recursive = self
+        // Check if this is a self-recursive tail call in a tailrec function
+        let is_self_tail_recursive = self
             .tailrec_context
             .as_ref()
             .map(|ctx| ctx.func_name == callee)
             .unwrap_or(false);
 
-        if is_tail_recursive {
-            // Tail recursive call: update parameters and branch back to loop start
-            return self.gen_tail_call(args);
+        if is_self_tail_recursive {
+            // Self tail-recursive call: use loop-based optimization
+            return self.gen_self_tail_call(args);
         }
 
-        // Regular function call
         let func_idx = self
             .functions
             .get(callee)
@@ -417,12 +419,18 @@ impl CodeGen {
             instrs.extend(self.gen_expr(arg)?);
         }
 
-        instrs.push(Instruction::Call(func_idx));
+        if is_tail_call {
+            // Tail call to another function: use return_call
+            instrs.push(Instruction::ReturnCall(func_idx));
+        } else {
+            // Regular call
+            instrs.push(Instruction::Call(func_idx));
+        }
         Ok(instrs)
     }
 
-    /// Generate code for a tail recursive call (loop back).
-    fn gen_tail_call(&mut self, args: &[TypedExpr]) -> Result<Vec<Instruction<'static>>, CodeGenError> {
+    /// Generate code for a self tail-recursive call (loop back).
+    fn gen_self_tail_call(&mut self, args: &[TypedExpr]) -> Result<Vec<Instruction<'static>>, CodeGenError> {
         let control_depth = self
             .tailrec_context
             .as_ref()

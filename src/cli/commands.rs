@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use wasmtime::{Engine, Instance, Module, Store};
+use wasmtime::{Config, Engine, Instance, Module, Store};
 
 use crate::codegen::CodeGen;
 use crate::parser::Parser;
@@ -147,8 +147,16 @@ pub fn run(path: &Path) -> Result<(), i32> {
         }
     };
 
-    // Execute with wasmtime
-    let engine = Engine::default();
+    // Execute with wasmtime (with tail-call support enabled)
+    let mut config = Config::new();
+    config.wasm_tail_call(true);
+    let engine = match Engine::new(&config) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("error: failed to create WASM engine: {}", e);
+            return Err(1);
+        }
+    };
     let module = match Module::new(&engine, &wasm_bytes) {
         Ok(m) => m,
         Err(e) => {
