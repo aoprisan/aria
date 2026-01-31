@@ -59,3 +59,39 @@ let y = 10;                              // type annotation optional
 fn add(a: Int, b: Int) -> Int { a + b }
 let result = if x > 0 { x } else { 0 - x };
 ```
+
+## Generics
+
+```
+fn identity<T>(x: T) -> T { x }
+let a = identity<Int>(42);
+let b = identity<Bool>(true);
+```
+
+## Generators
+
+```
+gen fn counter() -> Int {
+    yield 1;
+    yield 2;
+    yield 3;
+    0
+}
+```
+
+Generator functions return `Generator<T>` where T is the declared return type.
+
+## Async/Await
+
+```
+async fn fetch_data() -> Int {
+    42
+}
+
+async fn compute() -> Int {
+    let data = await fetch_data();
+    data + 1
+}
+```
+
+Async functions return `Future<T>` where T is the declared return type. The `await` keyword can only be used inside async functions and unwraps a `Future<T>` to `T`.
