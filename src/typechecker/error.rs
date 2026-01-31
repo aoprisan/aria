@@ -68,6 +68,12 @@ pub enum TypeErrorKind {
 
     /// Yield expression has wrong type for this generator.
     YieldTypeMismatch { expected: Type, found: Type },
+
+    /// Await expression used outside of an async function.
+    AwaitOutsideAsync,
+
+    /// Await on a non-Future type.
+    AwaitNonFuture { found: Type },
 }
 
 /// A type error with source location information.
@@ -166,6 +172,14 @@ impl TypeError {
 
     pub fn yield_type_mismatch(expected: Type, found: Type, span: Span) -> Self {
         TypeError::new(TypeErrorKind::YieldTypeMismatch { expected, found }, span)
+    }
+
+    pub fn await_outside_async(span: Span) -> Self {
+        TypeError::new(TypeErrorKind::AwaitOutsideAsync, span)
+    }
+
+    pub fn await_non_future(found: Type, span: Span) -> Self {
+        TypeError::new(TypeErrorKind::AwaitNonFuture { found }, span)
     }
 }
 
@@ -286,6 +300,16 @@ impl fmt::Display for TypeError {
                     f,
                     "yield expression has type {}, but generator expects {}",
                     found, expected
+                )
+            }
+            TypeErrorKind::AwaitOutsideAsync => {
+                write!(f, "await expression can only be used inside an async function (use 'async fn')")
+            }
+            TypeErrorKind::AwaitNonFuture { found } => {
+                write!(
+                    f,
+                    "await requires a Future type, but found {}",
+                    found
                 )
             }
         }

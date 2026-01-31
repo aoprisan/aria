@@ -130,6 +130,8 @@ pub enum Expr {
     },
     /// Yield expression for generators: `yield value`
     Yield(Box<Spanned<Expr>>),
+    /// Await expression for futures: `await future_expr`
+    Await(Box<Spanned<Expr>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -155,6 +157,8 @@ pub enum Stmt {
         is_tailrec: bool,
         /// Whether this is a generator function (uses `yield`)
         is_generator: bool,
+        /// Whether this is an async function (uses `await`)
+        is_async: bool,
     },
     Expr(Spanned<Expr>),
     /// Enum definition: `enum Color { Red, Green, Blue }` or `enum Option<T> { None, Some(T) }`

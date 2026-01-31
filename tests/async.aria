@@ -1,0 +1,16 @@
+// Test file for async function parsing
+async fn fetch_data() -> Int {
+    42
+}
+
+// Async with parameters
+async fn compute(x: Int, y: Int) -> Int {
+    x + y
+}
+
+// Async function calling another async function
+async fn get_int() -> Int { 42 }
+
+async fn use_int() -> Int {
+    await get_int()
+}

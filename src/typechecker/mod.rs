@@ -36,6 +36,8 @@ struct CurrentFunction {
     is_tailrec: bool,
     /// If this is a generator, what type do yields produce?
     generator_yield_type: Option<Type>,
+    /// If this is an async function, what type does the future resolve to?
+    async_result_type: Option<Type>,
 }
 
 impl TypeChecker {
@@ -88,6 +90,8 @@ impl TypeChecker {
                 type_params,
                 params,
                 return_ty,
+                is_generator,
+                is_async,
                 ..
             } = &stmt.node
             {
@@ -97,7 +101,17 @@ impl TypeChecker {
                         .iter()
                         .map(|p| self.env.resolve_type(&Type::from_ast(&p.node.ty.node)))
                         .collect();
-                    let ret = self.env.resolve_type(&Type::from_ast(&return_ty.node));
+                    let declared_ret = self.env.resolve_type(&Type::from_ast(&return_ty.node));
+
+                    // Wrap return type for generator/async functions
+                    let ret = if *is_generator {
+                        Type::Generator(Box::new(declared_ret))
+                    } else if *is_async {
+                        Type::Future(Box::new(declared_ret))
+                    } else {
+                        declared_ret
+                    };
+
                     let fn_type = Type::Function {
                         params: param_types,
                         ret: Box::new(ret),
@@ -150,7 +164,8 @@ impl TypeChecker {
                 body,
                 is_tailrec,
                 is_generator,
-            } => self.check_fn_stmt(name, type_params, params, return_ty, body, *is_tailrec, *is_generator, stmt.span.clone()),
+                is_async,
+            } => self.check_fn_stmt(name, type_params, params, return_ty, body, *is_tailrec, *is_generator, *is_async, stmt.span.clone()),
             Stmt::Expr(expr) => {
                 let typed_expr = self.check_expr(expr)?;
                 Ok(TypedStmt::new(TypedStmtKind::Expr(typed_expr), stmt.span.clone()))
@@ -229,6 +244,7 @@ impl TypeChecker {
         body: &Spanned<Expr>,
         is_tailrec: bool,
         is_generator: bool,
+        is_async: bool,
         span: logos::Span,
     ) -> Result<TypedStmt, TypeError> {
         // For generic functions, we skip type checking the body until instantiation
@@ -248,14 +264,22 @@ impl TypeChecker {
         let declared_ret_type = Type::from_ast(&return_ty.node);
 
         // For generator functions, the actual return type is Generator<T>
-        // where T is the declared return type (the yield type)
-        let (ret_type, generator_yield_type) = if is_generator {
+        // For async functions, the actual return type is Future<T>
+        // where T is the declared return type (the yield type / awaited type)
+        let (ret_type, generator_yield_type, async_result_type) = if is_generator {
             (
                 Type::Generator(Box::new(declared_ret_type.clone())),
                 Some(declared_ret_type),
+                None,
+            )
+        } else if is_async {
+            (
+                Type::Future(Box::new(declared_ret_type.clone())),
+                None,
+                Some(declared_ret_type),
             )
         } else {
-            (declared_ret_type, None)
+            (declared_ret_type, None, None)
         };
 
         // Enter new scope for function body
@@ -267,6 +291,7 @@ impl TypeChecker {
             name: name.to_string(),
             is_tailrec,
             generator_yield_type: generator_yield_type.clone(),
+            async_result_type: async_result_type.clone(),
         });
 
         // Bind parameters
@@ -281,7 +306,11 @@ impl TypeChecker {
         // Check body against return type
         // For tailrec functions, we check tail position
         // For generators, we check against the yield type (the last value returned)
-        let expected_body_type = generator_yield_type.as_ref().unwrap_or(&ret_type);
+        // For async functions, we check against the result type (the value returned)
+        let expected_body_type = generator_yield_type
+            .as_ref()
+            .or(async_result_type.as_ref())
+            .unwrap_or(&ret_type);
         let typed_body = if is_tailrec {
             self.check_expr_expecting_tailrec(body, expected_body_type, true)?
         } else {
@@ -386,6 +415,33 @@ impl TypeChecker {
                 Ok(TypedExpr::new(
                     TypedExprKind::Yield(Box::new(typed_value)),
                     expected_yield_type,
+                    expr.span.clone(),
+                ))
+            }
+            Expr::Await(value) => {
+                // Check that we're inside an async function
+                match &self.current_function {
+                    Some(ctx) if ctx.async_result_type.is_some() => {}
+                    _ => return Err(TypeError::await_outside_async(expr.span.clone())),
+                };
+
+                // Type check the awaited value
+                let typed_value = self.check_expr(value)?;
+
+                // Verify the awaited value is a Future type
+                let result_type = match &typed_value.ty {
+                    Type::Future(inner) => (**inner).clone(),
+                    other => {
+                        return Err(TypeError::await_non_future(
+                            other.clone(),
+                            expr.span.clone(),
+                        ));
+                    }
+                };
+
+                Ok(TypedExpr::new(
+                    TypedExprKind::Await(Box::new(typed_value)),
+                    result_type,
                     expr.span.clone(),
                 ))
             }
@@ -521,6 +577,33 @@ impl TypeChecker {
                 Ok(TypedExpr::new(
                     TypedExprKind::Yield(Box::new(typed_value)),
                     expected_yield_type,
+                    expr.span.clone(),
+                ))
+            }
+            Expr::Await(value) => {
+                // Check that we're inside an async function
+                match &self.current_function {
+                    Some(ctx) if ctx.async_result_type.is_some() => {}
+                    _ => return Err(TypeError::await_outside_async(expr.span.clone())),
+                };
+
+                // Type check the awaited value (not in tail position)
+                let typed_value = self.check_expr_tailrec(value, false)?;
+
+                // Verify the awaited value is a Future type
+                let result_type = match &typed_value.ty {
+                    Type::Future(inner) => (**inner).clone(),
+                    other => {
+                        return Err(TypeError::await_non_future(
+                            other.clone(),
+                            expr.span.clone(),
+                        ));
+                    }
+                };
+
+                Ok(TypedExpr::new(
+                    TypedExprKind::Await(Box::new(typed_value)),
+                    result_type,
                     expr.span.clone(),
                 ))
             }

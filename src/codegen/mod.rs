@@ -203,6 +203,10 @@ impl CodeGen {
             Type::Generator(_) => {
                 Err(CodeGenError::UnsupportedType("Generator (generator codegen not yet implemented)".to_string()))
             }
+            // Futures require special handling (async runtime)
+            Type::Future(_) => {
+                Err(CodeGenError::UnsupportedType("Future (async codegen not yet implemented)".to_string()))
+            }
         }
     }
 
@@ -426,6 +430,16 @@ impl CodeGen {
                 // This is a significant undertaking planned for future work.
                 Err(CodeGenError::UnsupportedType(
                     "yield expressions require generator state machine compilation (not yet implemented)".to_string()
+                ))
+            }
+            TypedExprKind::Await(_) => {
+                // Await expressions require async runtime support:
+                // 1. Future polling mechanism
+                // 2. Continuation-passing style transformation or state machine
+                // 3. Event loop / scheduler integration
+                // This is a significant undertaking planned for future work.
+                Err(CodeGenError::UnsupportedType(
+                    "await expressions require async runtime compilation (not yet implemented)".to_string()
                 ))
             }
         }

@@ -36,6 +36,8 @@ pub enum Type {
     },
     /// Generator type that yields values of type T
     Generator(Box<Type>),
+    /// Future type that will resolve to a value of type T
+    Future(Box<Type>),
 }
 
 impl Type {
@@ -88,6 +90,7 @@ impl Type {
                 format!("{}<{}>", name, args_str.join(", "))
             }
             Type::Generator(inner) => format!("Generator<{}>", inner.display_name()),
+            Type::Future(inner) => format!("Future<{}>", inner.display_name()),
         }
     }
 

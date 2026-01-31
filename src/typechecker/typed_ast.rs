@@ -96,6 +96,8 @@ pub enum TypedExprKind {
     },
     /// Yield expression for generators
     Yield(Box<TypedExpr>),
+    /// Await expression for futures
+    Await(Box<TypedExpr>),
 }
 
 /// A typed statement with source location.

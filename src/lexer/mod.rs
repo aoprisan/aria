@@ -47,6 +47,12 @@ pub enum Token {
     #[token("gen")]
     Gen,
 
+    #[token("async")]
+    Async,
+
+    #[token("await")]
+    Await,
+
     // Type keywords
     #[token("Int")]
     IntType,

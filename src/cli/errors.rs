@@ -153,6 +153,15 @@ fn report_type_error(filename: &str, source: &str, error: &TypeError) {
                 found, expected
             )
         }
+        TypeErrorKind::AwaitOutsideAsync => {
+            "await expression can only be used inside an async function (use 'async fn')".to_string()
+        }
+        TypeErrorKind::AwaitNonFuture { found } => {
+            format!(
+                "await requires a Future type, but found `{}`",
+                found
+            )
+        }
     };
 
     let title = match &error.kind {
@@ -176,6 +185,8 @@ fn report_type_error(filename: &str, source: &str, error: &TypeError) {
         TypeErrorKind::WrongNumberOfTypeArgs { .. } => "wrong number of type arguments",
         TypeErrorKind::YieldOutsideGenerator => "yield outside generator",
         TypeErrorKind::YieldTypeMismatch { .. } => "yield type mismatch",
+        TypeErrorKind::AwaitOutsideAsync => "await outside async",
+        TypeErrorKind::AwaitNonFuture { .. } => "await non-future",
     };
 
     Report::build(ReportKind::Error, filename, error.span.start)
