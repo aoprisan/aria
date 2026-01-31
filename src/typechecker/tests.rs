@@ -553,3 +553,139 @@ fn error_display_is_readable() {
     assert!(msg.contains("expected Int"));
     assert!(msg.contains("found String"));
 }
+
+// ============================================================================
+// Tail Recursion Tests
+// ============================================================================
+
+#[test]
+fn tailrec_simple() {
+    // A simple tail-recursive function should typecheck
+    assert_eq!(
+        check_ok(
+            r#"
+            tailrec fn countdown(n: Int) -> Int {
+                if n == 0 { 0 } else { countdown(n - 1) }
+            }
+            let x = countdown(10);
+            "#
+        ),
+        Type::Int
+    );
+}
+
+#[test]
+fn tailrec_with_accumulator() {
+    // Tail-recursive factorial with accumulator
+    assert_eq!(
+        check_ok(
+            r#"
+            tailrec fn factorial_acc(n: Int, acc: Int) -> Int {
+                if n == 0 { acc } else { factorial_acc(n - 1, n * acc) }
+            }
+            let x = factorial_acc(5, 1);
+            "#
+        ),
+        Type::Int
+    );
+}
+
+#[test]
+fn tailrec_in_both_branches() {
+    // Recursive call in both if branches is valid
+    assert_eq!(
+        check_ok(
+            r#"
+            tailrec fn foo(n: Int) -> Int {
+                if n == 0 { 0 } else { if n == 1 { foo(0) } else { foo(n - 1) } }
+            }
+            let x = foo(5);
+            "#
+        ),
+        Type::Int
+    );
+}
+
+#[test]
+fn tailrec_not_in_tail_position_error() {
+    // Recursive call not in tail position should fail
+    let source = r#"
+        tailrec fn bad(n: Int) -> Int {
+            bad(n - 1) + 1
+        }
+    "#;
+    let mut parser = Parser::new(source);
+    let program = parser.parse_program().expect("parse error");
+    let mut checker = TypeChecker::new();
+    let err = checker.check(&program).expect_err("should fail");
+    let msg = err[0].to_string();
+    assert!(msg.contains("not in tail position"));
+}
+
+#[test]
+fn tailrec_call_in_condition_error() {
+    // Recursive call in condition is not in tail position
+    let source = r#"
+        tailrec fn bad(n: Int) -> Int {
+            if bad(n) == 0 { 0 } else { 1 }
+        }
+    "#;
+    let mut parser = Parser::new(source);
+    let program = parser.parse_program().expect("parse error");
+    let mut checker = TypeChecker::new();
+    let err = checker.check(&program).expect_err("should fail");
+    let msg = err[0].to_string();
+    assert!(msg.contains("not in tail position"));
+}
+
+#[test]
+fn non_tailrec_allows_non_tail_calls() {
+    // Regular function allows recursive calls anywhere
+    assert_eq!(
+        check_ok(
+            r#"
+            fn factorial(n: Int) -> Int {
+                if n == 0 { 1 } else { n * factorial(n - 1) }
+            }
+            let x = factorial(5);
+            "#
+        ),
+        Type::Int
+    );
+}
+
+#[test]
+fn tailrec_mutual_recursion() {
+    // Mutually recursive functions with tailrec annotation
+    assert_eq!(
+        check_ok(
+            r#"
+            tailrec fn isEven(n: Int) -> Bool {
+                if n == 0 { true } else { isOdd(n - 1) }
+            }
+            tailrec fn isOdd(n: Int) -> Bool {
+                if n == 0 { false } else { isEven(n - 1) }
+            }
+            let x = isEven(10);
+            "#
+        ),
+        Type::Bool
+    );
+}
+
+#[test]
+fn tailrec_calls_other_function_in_tail_position() {
+    // Calls to other functions in tail position are allowed
+    assert_eq!(
+        check_ok(
+            r#"
+            tailrec fn foo(n: Int) -> Int {
+                if n == 0 { 0 } else { bar(n - 1) }
+            }
+            fn bar(n: Int) -> Int { n }
+            let x = foo(5);
+            "#
+        ),
+        Type::Int
+    );
+}

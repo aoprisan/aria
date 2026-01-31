@@ -1,0 +1,15 @@
+// Test tail-recursive functions
+
+// Tail-recursive countdown
+tailrec fn countdown(n: Int) -> Int {
+    if n == 0 { 0 } else { countdown(n - 1) }
+}
+
+// Tail-recursive sum with accumulator
+tailrec fn sum_acc(n: Int, acc: Int) -> Int {
+    if n == 0 { acc } else { sum_acc(n - 1, acc + n) }
+}
+
+// Test the functions
+let x = countdown(100);
+let y = sum_acc(10, 0);

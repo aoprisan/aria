@@ -1,0 +1,14 @@
+// Mutually tail-recursive functions example
+// Both functions must be marked 'tailrec' for mutual TCO
+
+tailrec fn isEven(n: Int) -> Bool {
+    if n == 0 { true } else { isOdd(n - 1) }
+}
+
+tailrec fn isOdd(n: Int) -> Bool {
+    if n == 0 { false } else { isEven(n - 1) }
+}
+
+// This works even with very large numbers thanks to TCO
+let result = isEven(1000000);
+if result { 1 } else { 0 };

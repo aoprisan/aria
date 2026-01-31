@@ -31,6 +31,8 @@ pub enum TypedExprKind {
     Call {
         callee: String,
         args: Vec<TypedExpr>,
+        /// Whether this call is in tail position (for tail-call optimization)
+        is_tail_call: bool,
     },
     If {
         condition: Box<TypedExpr>,
@@ -69,6 +71,7 @@ pub enum TypedStmtKind {
         params: Vec<(String, Type)>,
         return_ty: Type,
         body: TypedExpr,
+        is_tailrec: bool,
     },
     Expr(TypedExpr),
 }

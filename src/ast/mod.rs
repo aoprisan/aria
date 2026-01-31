@@ -98,6 +98,7 @@ pub enum Stmt {
         params: Vec<Spanned<Param>>,
         return_ty: Spanned<Type>,
         body: Spanned<Expr>,
+        is_tailrec: bool,
     },
     Expr(Spanned<Expr>),
 }

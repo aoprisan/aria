@@ -214,13 +214,16 @@ fn format_stmt(stmt: &Stmt) -> String {
             params,
             return_ty,
             body,
+            is_tailrec,
         } => {
             let params_str: Vec<String> = params
                 .iter()
                 .map(|p| format!("{}: {}", p.node.name, type_to_string(&p.node.ty.node)))
                 .collect();
+            let prefix = if *is_tailrec { "tailrec fn" } else { "fn" };
             format!(
-                "fn {}({}) -> {} {}",
+                "{} {}({}) -> {} {}",
+                prefix,
                 name,
                 params_str.join(", "),
                 type_to_string(&return_ty.node),

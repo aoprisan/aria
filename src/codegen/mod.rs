@@ -31,6 +31,17 @@ pub struct CodeGen {
     compiled_functions: Vec<CompiledFunction>,
     /// Function exports (name, function index).
     exports: Vec<(String, u32)>,
+    /// Current tailrec context (if compiling a tailrec function).
+    tailrec_context: Option<TailrecContext>,
+}
+
+/// Context for tail recursion optimization.
+struct TailrecContext {
+    /// Name of the current tailrec function.
+    func_name: String,
+    /// Current control flow depth (number of if/block we're nested inside the loop).
+    /// Used to compute the correct branch label for `br` back to the loop.
+    control_depth: u32,
 }
 
 struct CompiledFunction {
@@ -49,6 +60,7 @@ impl CodeGen {
             function_type_indices: Vec::new(),
             compiled_functions: Vec::new(),
             exports: Vec::new(),
+            tailrec_context: None,
         }
     }
 
@@ -102,10 +114,11 @@ impl CodeGen {
                 name,
                 params,
                 body,
+                is_tailrec,
                 ..
             } = &stmt.kind
             {
-                self.compile_function(name, params, body)?;
+                self.compile_function(name, params, body, *is_tailrec)?;
             }
         }
 
@@ -152,9 +165,10 @@ impl CodeGen {
 
     fn compile_function(
         &mut self,
-        _name: &str,
+        name: &str,
         params: &[(String, Type)],
         body: &TypedExpr,
+        is_tailrec: bool,
     ) -> Result<(), CodeGenError> {
         // Reset local state for this function
         self.locals.clear();
@@ -167,9 +181,41 @@ impl CodeGen {
             self.next_local += 1;
         }
 
-        // Generate body instructions
-        let mut instructions = self.gen_expr(body)?;
-        instructions.push(Instruction::End);
+        let mut instructions = if is_tailrec {
+            // Set up tailrec context
+            self.tailrec_context = Some(TailrecContext {
+                func_name: name.to_string(),
+                control_depth: 0,
+            });
+
+            // Determine block type for the loop based on return type
+            let block_type = match &body.ty {
+                Type::Unit => BlockType::Empty,
+                Type::Int | Type::Bool => BlockType::Result(ValType::I32),
+                Type::Float => BlockType::Result(ValType::F64),
+                ty => {
+                    return Err(CodeGenError::UnsupportedType(format!(
+                        "tailrec return type: {}",
+                        ty
+                    )))
+                }
+            };
+
+            // Generate: loop $tailrec <body> end
+            let mut instrs = vec![Instruction::Loop(block_type)];
+            instrs.extend(self.gen_expr(body)?);
+            instrs.push(Instruction::End); // end loop
+
+            // Clear tailrec context
+            self.tailrec_context = None;
+
+            instrs
+        } else {
+            // Regular function compilation
+            self.gen_expr(body)?
+        };
+
+        instructions.push(Instruction::End); // end function
 
         // Collect locals that were allocated beyond parameters
         let num_params = params.len() as u32;
@@ -259,7 +305,9 @@ impl CodeGen {
             TypedExprKind::Binary { op, left, right } => {
                 self.gen_binary(*op, left, right, &expr.ty)
             }
-            TypedExprKind::Call { callee, args } => self.gen_call(callee, args),
+            TypedExprKind::Call { callee, args, is_tail_call } => {
+                self.gen_call(callee, args, *is_tail_call)
+            }
             TypedExprKind::If {
                 condition,
                 then_branch,
@@ -344,7 +392,20 @@ impl CodeGen {
         &mut self,
         callee: &str,
         args: &[TypedExpr],
+        is_tail_call: bool,
     ) -> Result<Vec<Instruction<'static>>, CodeGenError> {
+        // Check if this is a self-recursive tail call in a tailrec function
+        let is_self_tail_recursive = self
+            .tailrec_context
+            .as_ref()
+            .map(|ctx| ctx.func_name == callee)
+            .unwrap_or(false);
+
+        if is_self_tail_recursive {
+            // Self tail-recursive call: use loop-based optimization
+            return self.gen_self_tail_call(args);
+        }
+
         let func_idx = self
             .functions
             .get(callee)
@@ -358,7 +419,56 @@ impl CodeGen {
             instrs.extend(self.gen_expr(arg)?);
         }
 
-        instrs.push(Instruction::Call(func_idx));
+        if is_tail_call {
+            // Tail call to another function: use return_call
+            instrs.push(Instruction::ReturnCall(func_idx));
+        } else {
+            // Regular call
+            instrs.push(Instruction::Call(func_idx));
+        }
+        Ok(instrs)
+    }
+
+    /// Generate code for a self tail-recursive call (loop back).
+    fn gen_self_tail_call(&mut self, args: &[TypedExpr]) -> Result<Vec<Instruction<'static>>, CodeGenError> {
+        let control_depth = self
+            .tailrec_context
+            .as_ref()
+            .map(|ctx| ctx.control_depth)
+            .unwrap_or(0);
+
+        let mut instrs = Vec::new();
+
+        // We need to evaluate all arguments first, then store them.
+        // This handles cases like `tailrec fn f(a, b) { f(b, a) }`
+        // where we can't just store a=b, b=a directly.
+
+        // Strategy: use temporary locals
+        // 1. Evaluate each arg and store in a temp local
+        // 2. Load temps into parameter locals
+
+        let mut temp_locals = Vec::new();
+
+        // Step 1: Evaluate args and store in temps
+        for arg in args {
+            instrs.extend(self.gen_expr(arg)?);
+            let temp_idx = self.next_local;
+            self.next_local += 1;
+            temp_locals.push(temp_idx);
+            instrs.push(Instruction::LocalSet(temp_idx));
+        }
+
+        // Step 2: Load temps into parameter locals
+        for (i, &temp_idx) in temp_locals.iter().enumerate() {
+            instrs.push(Instruction::LocalGet(temp_idx));
+            instrs.push(Instruction::LocalSet(i as u32));
+        }
+
+        // Step 3: Branch back to loop start
+        // The branch label is the control_depth (number of if/block structures
+        // we're nested inside, as we need to target the outer loop)
+        instrs.push(Instruction::Br(control_depth));
+
         Ok(instrs)
     }
 
@@ -384,11 +494,21 @@ impl CodeGen {
             }
         };
 
+        // Track control flow depth for tailrec
+        if let Some(ref mut ctx) = self.tailrec_context {
+            ctx.control_depth += 1;
+        }
+
         instrs.push(Instruction::If(block_type));
         instrs.extend(self.gen_expr(then_branch)?);
         instrs.push(Instruction::Else);
         instrs.extend(self.gen_expr(else_branch)?);
         instrs.push(Instruction::End);
+
+        // Restore control flow depth
+        if let Some(ref mut ctx) = self.tailrec_context {
+            ctx.control_depth -= 1;
+        }
 
         Ok(instrs)
     }

@@ -32,6 +32,9 @@ pub enum TypeErrorKind {
 
     /// If branches have different types.
     IfBranchTypeMismatch { then_ty: Type, else_ty: Type },
+
+    /// Recursive call in tailrec function is not in tail position.
+    NotTailRecursive { func_name: String },
 }
 
 /// A type error with source location information.
@@ -77,6 +80,10 @@ impl TypeError {
     pub fn if_branch_mismatch(then_ty: Type, else_ty: Type, span: Span) -> Self {
         TypeError::new(TypeErrorKind::IfBranchTypeMismatch { then_ty, else_ty }, span)
     }
+
+    pub fn not_tail_recursive(func_name: String, span: Span) -> Self {
+        TypeError::new(TypeErrorKind::NotTailRecursive { func_name }, span)
+    }
 }
 
 impl fmt::Display for TypeError {
@@ -117,6 +124,13 @@ impl fmt::Display for TypeError {
                     f,
                     "if branches have incompatible types: then branch is {}, else branch is {}",
                     then_ty, else_ty
+                )
+            }
+            TypeErrorKind::NotTailRecursive { func_name } => {
+                write!(
+                    f,
+                    "recursive call to '{}' is not in tail position",
+                    func_name
                 )
             }
         }
