@@ -45,6 +45,16 @@ fn test_keyword_false() {
 }
 
 #[test]
+fn test_keyword_tailrec() {
+    assert_eq!(lex("tailrec"), vec![Token::Tailrec]);
+}
+
+#[test]
+fn test_tailrec_fn() {
+    assert_eq!(lex("tailrec fn"), vec![Token::Tailrec, Token::Fn]);
+}
+
+#[test]
 fn test_all_keywords() {
     assert_eq!(
         lex("let fn if else true false"),

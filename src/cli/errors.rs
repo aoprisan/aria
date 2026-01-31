@@ -83,6 +83,12 @@ fn report_type_error(filename: &str, source: &str, error: &TypeError) {
                 then_ty, else_ty
             )
         }
+        TypeErrorKind::NotTailRecursive { func_name } => {
+            format!(
+                "recursive call to `{}` is not in tail position",
+                func_name
+            )
+        }
     };
 
     let title = match &error.kind {
@@ -94,6 +100,7 @@ fn report_type_error(filename: &str, source: &str, error: &TypeError) {
         TypeErrorKind::ArityMismatch { .. } => "wrong number of arguments",
         TypeErrorKind::BinaryOpTypeMismatch { .. } => "invalid operator",
         TypeErrorKind::IfBranchTypeMismatch { .. } => "incompatible branch types",
+        TypeErrorKind::NotTailRecursive { .. } => "not tail recursive",
     };
 
     Report::build(ReportKind::Error, filename, error.span.start)

@@ -158,7 +158,12 @@ impl<'source> Parser<'source> {
     fn parse_stmt(&mut self) -> ParseResult<Spanned<Stmt>> {
         match self.peek_token() {
             Some(Ok(Token::Let)) => self.parse_let_stmt(),
-            Some(Ok(Token::Fn)) => self.parse_fn_stmt(),
+            Some(Ok(Token::Fn)) => self.parse_fn_stmt(false),
+            Some(Ok(Token::Tailrec)) => {
+                let start_span = self.advance().unwrap().1; // consume 'tailrec'
+                self.expect(Token::Fn)?;
+                self.parse_fn_stmt_inner(true, start_span)
+            }
             Some(Ok(_)) => self.parse_expr_stmt(),
             Some(Err(())) => {
                 let (_, span) = self.advance().unwrap();
@@ -191,8 +196,12 @@ impl<'source> Parser<'source> {
         Ok(Spanned::new(Stmt::Let { name, ty, value }, span))
     }
 
-    fn parse_fn_stmt(&mut self) -> ParseResult<Spanned<Stmt>> {
+    fn parse_fn_stmt(&mut self, is_tailrec: bool) -> ParseResult<Spanned<Stmt>> {
         let start_span = self.expect(Token::Fn)?;
+        self.parse_fn_stmt_inner(is_tailrec, start_span)
+    }
+
+    fn parse_fn_stmt_inner(&mut self, is_tailrec: bool, start_span: Span) -> ParseResult<Spanned<Stmt>> {
         let (name, _) = self.expect_ident()?;
         self.expect(Token::LParen)?;
         let params = self.parse_params()?;
@@ -208,6 +217,7 @@ impl<'source> Parser<'source> {
                 params,
                 return_ty,
                 body,
+                is_tailrec,
             },
             span,
         ))

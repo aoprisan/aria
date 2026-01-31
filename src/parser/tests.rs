@@ -464,6 +464,7 @@ fn test_fn_no_params() {
             params,
             return_ty,
             body,
+            ..
         } => {
             assert_eq!(name, "foo");
             assert!(params.is_empty());
@@ -507,6 +508,34 @@ fn test_fn_multiple_params() {
             assert_eq!(params[0].node.ty.node, Type::Int);
             assert_eq!(params[1].node.name, "b");
             assert_eq!(params[1].node.ty.node, Type::Int);
+        }
+        _ => panic!("Expected fn statement"),
+    }
+}
+
+// ============================================================================
+// Tailrec Function Tests
+// ============================================================================
+
+#[test]
+fn test_tailrec_fn() {
+    let program = parse("tailrec fn countdown(n: Int) -> Int { n }").unwrap();
+    match &program.stmts[0].node {
+        Stmt::Fn { name, is_tailrec, .. } => {
+            assert_eq!(name, "countdown");
+            assert!(*is_tailrec);
+        }
+        _ => panic!("Expected fn statement"),
+    }
+}
+
+#[test]
+fn test_regular_fn_not_tailrec() {
+    let program = parse("fn add(a: Int, b: Int) -> Int { a + b }").unwrap();
+    match &program.stmts[0].node {
+        Stmt::Fn { name, is_tailrec, .. } => {
+            assert_eq!(name, "add");
+            assert!(!*is_tailrec);
         }
         _ => panic!("Expected fn statement"),
     }

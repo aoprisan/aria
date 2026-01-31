@@ -69,6 +69,7 @@ pub enum TypedStmtKind {
         params: Vec<(String, Type)>,
         return_ty: Type,
         body: TypedExpr,
+        is_tailrec: bool,
     },
     Expr(TypedExpr),
 }

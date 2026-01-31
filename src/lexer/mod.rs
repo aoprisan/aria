@@ -20,6 +20,9 @@ pub enum Token {
     #[token("fn")]
     Fn,
 
+    #[token("tailrec")]
+    Tailrec,
+
     #[token("if")]
     If,
 
