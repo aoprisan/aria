@@ -20,6 +20,11 @@ pub enum Type {
     Bool,
     /// A named type (e.g., enum type like `Option` or `Color`)
     Named(String),
+    /// A generic type instantiation (e.g., `Option<Int>`, `Pair<Int, Bool>`)
+    Generic {
+        name: String,
+        type_args: Vec<Spanned<Type>>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -100,6 +105,8 @@ pub enum Expr {
     },
     Call {
         callee: String,
+        /// Explicit type arguments for generic function calls (e.g., `identity<Int>(42)`)
+        type_args: Option<Vec<Spanned<Type>>>,
         args: Vec<Spanned<Expr>>,
     },
     If {
@@ -138,15 +145,19 @@ pub enum Stmt {
     },
     Fn {
         name: String,
+        /// Type parameters for generic functions (e.g., `<T, U>`)
+        type_params: Vec<String>,
         params: Vec<Spanned<Param>>,
         return_ty: Spanned<Type>,
         body: Spanned<Expr>,
         is_tailrec: bool,
     },
     Expr(Spanned<Expr>),
-    /// Enum definition: `enum Color { Red, Green, Blue }`
+    /// Enum definition: `enum Color { Red, Green, Blue }` or `enum Option<T> { None, Some(T) }`
     Enum {
         name: String,
+        /// Type parameters for generic enums (e.g., `<T>`)
+        type_params: Vec<String>,
         variants: Vec<Spanned<EnumVariant>>,
     },
 }

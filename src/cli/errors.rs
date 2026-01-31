@@ -128,6 +128,22 @@ fn report_type_error(filename: &str, source: &str, error: &TypeError) {
                 variant_name
             )
         }
+        TypeErrorKind::TypeInferenceFailed { func_name, type_params } => {
+            format!(
+                "cannot infer type arguments for generic function `{}`, please specify: {}<{}>(...)",
+                func_name, func_name, type_params.join(", ")
+            )
+        }
+        TypeErrorKind::WrongNumberOfTypeArgs { func_name, expected, found } => {
+            format!(
+                "generic function `{}` expects {} type argument{}, but {} {} provided",
+                func_name,
+                expected,
+                if *expected == 1 { "" } else { "s" },
+                found,
+                if *found == 1 { "was" } else { "were" }
+            )
+        }
     };
 
     let title = match &error.kind {
@@ -147,6 +163,8 @@ fn report_type_error(filename: &str, source: &str, error: &TypeError) {
         TypeErrorKind::PatternTypeMismatch { .. } => "pattern type mismatch",
         TypeErrorKind::MissingVariantPayload { .. } => "missing variant payload",
         TypeErrorKind::UnexpectedVariantPayload { .. } => "unexpected variant payload",
+        TypeErrorKind::TypeInferenceFailed { .. } => "type inference failed",
+        TypeErrorKind::WrongNumberOfTypeArgs { .. } => "wrong number of type arguments",
     };
 
     Report::build(ReportKind::Error, filename, error.span.start)

@@ -56,6 +56,12 @@ pub enum TypeErrorKind {
 
     /// Variant doesn't expect a payload but one was provided.
     UnexpectedVariantPayload { variant_name: String },
+
+    /// Generic function called without explicit type arguments and inference failed.
+    TypeInferenceFailed { func_name: String, type_params: Vec<String> },
+
+    /// Wrong number of type arguments for a generic function.
+    WrongNumberOfTypeArgs { func_name: String, expected: usize, found: usize },
 }
 
 /// A type error with source location information.
@@ -138,6 +144,14 @@ impl TypeError {
 
     pub fn unexpected_variant_payload(variant_name: String, span: Span) -> Self {
         TypeError::new(TypeErrorKind::UnexpectedVariantPayload { variant_name }, span)
+    }
+
+    pub fn type_inference_failed(func_name: String, type_params: Vec<String>, span: Span) -> Self {
+        TypeError::new(TypeErrorKind::TypeInferenceFailed { func_name, type_params }, span)
+    }
+
+    pub fn wrong_number_of_type_args(func_name: String, expected: usize, found: usize, span: Span) -> Self {
+        TypeError::new(TypeErrorKind::WrongNumberOfTypeArgs { func_name, expected, found }, span)
     }
 }
 
@@ -234,6 +248,20 @@ impl fmt::Display for TypeError {
                     f,
                     "variant '{}' does not expect a payload",
                     variant_name
+                )
+            }
+            TypeErrorKind::TypeInferenceFailed { func_name, type_params } => {
+                write!(
+                    f,
+                    "cannot infer type arguments for generic function '{}', please specify: {}<{}>(...)",
+                    func_name, func_name, type_params.join(", ")
+                )
+            }
+            TypeErrorKind::WrongNumberOfTypeArgs { func_name, expected, found } => {
+                write!(
+                    f,
+                    "generic function '{}' expects {} type argument(s), but {} were provided",
+                    func_name, expected, found
                 )
             }
         }

@@ -124,6 +124,11 @@ pub enum TypedStmtKind {
         body: TypedExpr,
         is_tailrec: bool,
     },
+    /// Generic function definition (placeholder until monomorphization)
+    GenericFn {
+        name: String,
+        type_params: Vec<String>,
+    },
     Expr(TypedExpr),
     /// Enum definition
     Enum {
@@ -132,14 +137,37 @@ pub enum TypedStmtKind {
     },
 }
 
+/// Request to generate a monomorphized version of a generic function.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MonomorphizationRequest {
+    /// The mangled name for the monomorphized function (e.g., "identity$Int")
+    pub mangled_name: String,
+    /// The original generic function name
+    pub original_name: String,
+    /// Parameter names and their concrete types
+    pub params: Vec<(String, Type)>,
+    /// The concrete return type
+    pub return_ty: Type,
+    /// The function body (typed with type variables substituted)
+    pub body: TypedExpr,
+    /// Whether the original function was tailrec
+    pub is_tailrec: bool,
+}
+
 /// A fully typed program.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypedProgram {
     pub stmts: Vec<TypedStmt>,
+    /// Monomorphized functions to generate
+    pub monomorphizations: Vec<MonomorphizationRequest>,
 }
 
 impl TypedProgram {
     pub fn new(stmts: Vec<TypedStmt>) -> Self {
-        TypedProgram { stmts }
+        TypedProgram { stmts, monomorphizations: Vec::new() }
+    }
+
+    pub fn with_monomorphizations(stmts: Vec<TypedStmt>, monomorphizations: Vec<MonomorphizationRequest>) -> Self {
+        TypedProgram { stmts, monomorphizations }
     }
 }

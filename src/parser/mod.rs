@@ -89,6 +89,8 @@ pub type ParseResult<T> = Result<T, ParseError>;
 pub struct Parser<'source> {
     tokens: Peekable<Lexer<'source>>,
     current_span: Span,
+    /// Buffer for "put back" token when we need to undo consumption
+    putback_token: Option<(Result<Token, ()>, Span)>,
 }
 
 impl<'source> Parser<'source> {
@@ -96,23 +98,42 @@ impl<'source> Parser<'source> {
         Parser {
             tokens: Lexer::new(source).peekable(),
             current_span: 0..0,
+            putback_token: None,
         }
     }
 
     fn peek(&mut self) -> Option<&Result<Token, ()>> {
-        self.tokens.peek().map(|(tok, _)| tok)
+        if self.putback_token.is_some() {
+            self.putback_token.as_ref().map(|(tok, _)| tok)
+        } else {
+            self.tokens.peek().map(|(tok, _)| tok)
+        }
     }
 
     fn peek_token(&mut self) -> Option<Result<&Token, ()>> {
-        self.tokens.peek().map(|(tok, _)| tok.as_ref().map_err(|_| ()))
+        if let Some((ref tok, _)) = self.putback_token {
+            Some(tok.as_ref().map_err(|_| ()))
+        } else {
+            self.tokens.peek().map(|(tok, _)| tok.as_ref().map_err(|_| ()))
+        }
     }
 
     fn advance(&mut self) -> Option<(Result<Token, ()>, Span)> {
+        if let Some(token) = self.putback_token.take() {
+            self.current_span = token.1.clone();
+            return Some(token);
+        }
         let result = self.tokens.next();
         if let Some((_, ref span)) = result {
             self.current_span = span.clone();
         }
         result
+    }
+
+    /// Put a token back into the stream so it will be returned by the next advance().
+    fn putback(&mut self, token: Token, span: Span) {
+        debug_assert!(self.putback_token.is_none(), "Can only putback one token at a time");
+        self.putback_token = Some((Ok(token), span));
     }
 
     fn expect(&mut self, expected: Token) -> ParseResult<Span> {
@@ -204,6 +225,14 @@ impl<'source> Parser<'source> {
 
     fn parse_fn_stmt_inner(&mut self, is_tailrec: bool, start_span: Span) -> ParseResult<Spanned<Stmt>> {
         let (name, _) = self.expect_ident()?;
+
+        // Parse optional type parameters: `<T, U>`
+        let type_params = if matches!(self.peek_token(), Some(Ok(Token::Lt))) {
+            self.parse_type_params()?
+        } else {
+            Vec::new()
+        };
+
         self.expect(Token::LParen)?;
         let params = self.parse_params()?;
         self.expect(Token::RParen)?;
@@ -215,6 +244,7 @@ impl<'source> Parser<'source> {
         Ok(Spanned::new(
             Stmt::Fn {
                 name,
+                type_params,
                 params,
                 return_ty,
                 body,
@@ -222,6 +252,29 @@ impl<'source> Parser<'source> {
             },
             span,
         ))
+    }
+
+    /// Parse type parameters: `<T, U, V>`
+    fn parse_type_params(&mut self) -> ParseResult<Vec<String>> {
+        self.expect(Token::Lt)?;
+        let mut type_params = Vec::new();
+
+        if !matches!(self.peek_token(), Some(Ok(Token::Gt))) {
+            loop {
+                let (name, _) = self.expect_ident()?;
+                type_params.push(name);
+
+                match self.peek_token() {
+                    Some(Ok(Token::Comma)) => {
+                        self.advance();
+                    }
+                    _ => break,
+                }
+            }
+        }
+
+        self.expect(Token::Gt)?;
+        Ok(type_params)
     }
 
     fn parse_params(&mut self) -> ParseResult<Vec<Spanned<Param>>> {
@@ -264,7 +317,18 @@ impl<'source> Parser<'source> {
             Some((Ok(Token::StringType), span)) => Ok(Spanned::new(Type::String, span)),
             Some((Ok(Token::BoolType), span)) => Ok(Spanned::new(Type::Bool, span)),
             // Named types (e.g., enum types like `Option` or `Color`)
-            Some((Ok(Token::Ident(name)), span)) => Ok(Spanned::new(Type::Named(name), span)),
+            // May be followed by type arguments: `Option<Int>`
+            Some((Ok(Token::Ident(name)), start_span)) => {
+                if matches!(self.peek_token(), Some(Ok(Token::Lt))) {
+                    // Generic type instantiation: `Option<Int, Bool>`
+                    let type_args = self.parse_type_args()?;
+                    let end_span = self.current_span.clone();
+                    let span = start_span.start..end_span.end;
+                    Ok(Spanned::new(Type::Generic { name, type_args }, span))
+                } else {
+                    Ok(Spanned::new(Type::Named(name), start_span))
+                }
+            }
             Some((Ok(tok), span)) => Err(ParseError::unexpected_token(
                 vec!["Int", "Float", "String", "Bool", "type name"],
                 Some(tok),
@@ -276,6 +340,28 @@ impl<'source> Parser<'source> {
                 self.current_span.clone(),
             )),
         }
+    }
+
+    /// Parse type arguments: `<Int, Bool, Option<Int>>`
+    fn parse_type_args(&mut self) -> ParseResult<Vec<Spanned<Type>>> {
+        self.expect(Token::Lt)?;
+        let mut type_args = Vec::new();
+
+        if !matches!(self.peek_token(), Some(Ok(Token::Gt))) {
+            loop {
+                type_args.push(self.parse_type()?);
+
+                match self.peek_token() {
+                    Some(Ok(Token::Comma)) => {
+                        self.advance();
+                    }
+                    _ => break,
+                }
+            }
+        }
+
+        self.expect(Token::Gt)?;
+        Ok(type_args)
     }
 
     fn parse_expr(&mut self) -> ParseResult<Spanned<Expr>> {
@@ -392,16 +478,109 @@ impl<'source> Parser<'source> {
     fn parse_ident_or_call(&mut self) -> ParseResult<Spanned<Expr>> {
         let (name, start_span) = self.expect_ident()?;
 
-        // Check if this is a function call
-        if matches!(self.peek_token(), Some(Ok(Token::LParen))) {
-            self.advance(); // consume '('
-            let args = self.parse_args()?;
-            let end_span = self.expect(Token::RParen)?;
-            let span = start_span.start..end_span.end;
-            Ok(Spanned::new(Expr::Call { callee: name, args }, span))
-        } else {
-            Ok(Spanned::new(Expr::Ident(name), start_span))
+        // Check if this is a function call, possibly with type arguments
+        // `foo(...)` or `foo<Int, Bool>(...)`
+        match self.peek_token() {
+            Some(Ok(Token::LParen)) => {
+                self.advance(); // consume '('
+                let args = self.parse_args()?;
+                let end_span = self.expect(Token::RParen)?;
+                let span = start_span.start..end_span.end;
+                Ok(Spanned::new(
+                    Expr::Call {
+                        callee: name,
+                        type_args: None,
+                        args,
+                    },
+                    span,
+                ))
+            }
+            Some(Ok(Token::Lt)) => {
+                // Could be type arguments for a generic call, or could be a comparison.
+                // Use a heuristic: peek at the token after `<` without consuming.
+                // If it looks like a type, parse as generic call. Otherwise, just return identifier.
+                if self.looks_like_type_args() {
+                    if let Some(type_args) = self.try_parse_call_type_args()? {
+                        // Parsed type arguments, now expect `(`
+                        self.expect(Token::LParen)?;
+                        let args = self.parse_args()?;
+                        let end_span = self.expect(Token::RParen)?;
+                        let span = start_span.start..end_span.end;
+                        Ok(Spanned::new(
+                            Expr::Call {
+                                callee: name,
+                                type_args: Some(type_args),
+                                args,
+                            },
+                            span,
+                        ))
+                    } else {
+                        // Not type arguments, just an identifier
+                        Ok(Spanned::new(Expr::Ident(name), start_span))
+                    }
+                } else {
+                    // Doesn't look like type arguments (e.g., `a < b` comparison)
+                    Ok(Spanned::new(Expr::Ident(name), start_span))
+                }
+            }
+            _ => Ok(Spanned::new(Expr::Ident(name), start_span)),
         }
+    }
+
+    /// Check if what follows `<` looks like type arguments.
+    /// Consumes `<` to peek at what follows. If it doesn't look like type args,
+    /// puts `<` back and returns false.
+    fn looks_like_type_args(&mut self) -> bool {
+        // Peek at current token (should be `<`)
+        if !matches!(self.peek_token(), Some(Ok(Token::Lt))) {
+            return false;
+        }
+
+        // Consume `<` to look at what follows
+        let (_, lt_span) = self.advance().unwrap(); // consume '<'
+
+        let looks_like_type = match self.peek_token() {
+            Some(Ok(Token::IntType))
+            | Some(Ok(Token::FloatType))
+            | Some(Ok(Token::StringType))
+            | Some(Ok(Token::BoolType)) => true,
+            Some(Ok(Token::Ident(name))) => name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false),
+            _ => false,
+        };
+
+        if !looks_like_type {
+            // Not type arguments - put `<` back so it can be parsed as comparison
+            self.putback(Token::Lt, lt_span);
+            return false;
+        }
+
+        // Looks like type arguments, `<` stays consumed
+        true
+    }
+
+    /// Try to parse type arguments for a function call.
+    /// Assumes `<` has already been consumed by looks_like_type_args.
+    /// Returns Some(type_args) if successful, None if not type arguments.
+    fn try_parse_call_type_args(&mut self) -> ParseResult<Option<Vec<Spanned<Type>>>> {
+        // `<` was already consumed by looks_like_type_args
+
+        // Parse type arguments
+        let mut type_args = Vec::new();
+
+        loop {
+            type_args.push(self.parse_type()?);
+
+            match self.peek_token() {
+                Some(Ok(Token::Comma)) => {
+                    self.advance();
+                }
+                _ => break,
+            }
+        }
+
+        self.expect(Token::Gt)?;
+
+        Ok(Some(type_args))
     }
 
     fn parse_args(&mut self) -> ParseResult<Vec<Spanned<Expr>>> {
@@ -529,9 +708,18 @@ impl<'source> Parser<'source> {
 
     /// Parse an enum definition: `enum Color { Red, Green, Blue }`
     /// or with payloads: `enum Option { None, Some(Int) }`
+    /// or generic: `enum Option<T> { None, Some(T) }`
     fn parse_enum_stmt(&mut self) -> ParseResult<Spanned<Stmt>> {
         let start_span = self.expect(Token::Enum)?;
         let (name, _) = self.expect_ident()?;
+
+        // Parse optional type parameters: `<T, U>`
+        let type_params = if matches!(self.peek_token(), Some(Ok(Token::Lt))) {
+            self.parse_type_params()?
+        } else {
+            Vec::new()
+        };
+
         self.expect(Token::LBrace)?;
 
         let mut variants = Vec::new();
@@ -575,7 +763,7 @@ impl<'source> Parser<'source> {
 
         let end_span = self.expect(Token::RBrace)?;
         let span = start_span.start..end_span.end;
-        Ok(Spanned::new(Stmt::Enum { name, variants }, span))
+        Ok(Spanned::new(Stmt::Enum { name, type_params, variants }, span))
     }
 
     /// Parse a match expression: `match expr { pat => body, ... }`

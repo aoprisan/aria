@@ -11,10 +11,11 @@ use crate::ast::{BinOp, Expr, Literal, MatchArm, Pattern, Program, Spanned, Stmt
 use self::env::Env;
 use self::error::TypeError;
 use self::typed_ast::{
-    TypedExpr, TypedExprKind, TypedMatchArm, TypedPattern, TypedPatternKind, TypedProgram,
-    TypedStmt, TypedStmtKind,
+    MonomorphizationRequest, TypedExpr, TypedExprKind, TypedMatchArm, TypedPattern,
+    TypedPatternKind, TypedProgram, TypedStmt, TypedStmtKind,
 };
 use self::types::{EnumVariantDef, Type};
+use std::collections::HashSet;
 
 /// Bidirectional type checker for Aria programs.
 pub struct TypeChecker {
@@ -22,6 +23,10 @@ pub struct TypeChecker {
     errors: Vec<TypeError>,
     /// Current function context for tailrec checking
     current_function: Option<CurrentFunction>,
+    /// Monomorphization requests generated during type checking
+    monomorphizations: Vec<MonomorphizationRequest>,
+    /// Track which monomorphizations have already been generated
+    generated_monomorphizations: HashSet<String>,
 }
 
 /// Context for the function currently being type-checked.
@@ -37,6 +42,8 @@ impl TypeChecker {
             env: Env::new(),
             errors: Vec::new(),
             current_function: None,
+            monomorphizations: Vec::new(),
+            generated_monomorphizations: HashSet::new(),
         }
     }
 
@@ -44,7 +51,7 @@ impl TypeChecker {
     pub fn check(&mut self, program: &Program) -> Result<TypedProgram, Vec<TypeError>> {
         // First pass: register all enum definitions
         for stmt in &program.stmts {
-            if let Stmt::Enum { name, variants } = &stmt.node {
+            if let Stmt::Enum { name, variants, .. } = &stmt.node {
                 let typed_variants: Vec<EnumVariantDef> = variants
                     .iter()
                     .map(|v| {
@@ -76,25 +83,37 @@ impl TypeChecker {
         for stmt in &program.stmts {
             if let Stmt::Fn {
                 name,
+                type_params,
                 params,
                 return_ty,
                 ..
             } = &stmt.node
             {
-                let param_types: Vec<Type> = params
-                    .iter()
-                    .map(|p| self.env.resolve_type(&Type::from_ast(&p.node.ty.node)))
-                    .collect();
-                let ret = self.env.resolve_type(&Type::from_ast(&return_ty.node));
-                let fn_type = Type::Function {
-                    params: param_types,
-                    ret: Box::new(ret),
-                };
-                if !self.env.define(name.clone(), fn_type) {
-                    self.errors.push(TypeError::duplicate_definition(
-                        name.clone(),
-                        stmt.span.clone(),
-                    ));
+                if type_params.is_empty() {
+                    // Non-generic function: register its type directly
+                    let param_types: Vec<Type> = params
+                        .iter()
+                        .map(|p| self.env.resolve_type(&Type::from_ast(&p.node.ty.node)))
+                        .collect();
+                    let ret = self.env.resolve_type(&Type::from_ast(&return_ty.node));
+                    let fn_type = Type::Function {
+                        params: param_types,
+                        ret: Box::new(ret),
+                    };
+                    if !self.env.define(name.clone(), fn_type) {
+                        self.errors.push(TypeError::duplicate_definition(
+                            name.clone(),
+                            stmt.span.clone(),
+                        ));
+                    }
+                } else {
+                    // Generic function: store definition for later instantiation
+                    if !self.env.define_generic_function(name.clone(), type_params.clone(), stmt.clone()) {
+                        self.errors.push(TypeError::duplicate_definition(
+                            name.clone(),
+                            stmt.span.clone(),
+                        ));
+                    }
                 }
             }
         }
@@ -109,7 +128,10 @@ impl TypeChecker {
         }
 
         if self.errors.is_empty() {
-            Ok(TypedProgram::new(typed_stmts))
+            Ok(TypedProgram::with_monomorphizations(
+                typed_stmts,
+                std::mem::take(&mut self.monomorphizations),
+            ))
         } else {
             Err(std::mem::take(&mut self.errors))
         }
@@ -120,18 +142,20 @@ impl TypeChecker {
             Stmt::Let { name, ty, value } => self.check_let_stmt(name, ty, value, stmt.span.clone()),
             Stmt::Fn {
                 name,
+                type_params,
                 params,
                 return_ty,
                 body,
                 is_tailrec,
-            } => self.check_fn_stmt(name, params, return_ty, body, *is_tailrec, stmt.span.clone()),
+            } => self.check_fn_stmt(name, type_params, params, return_ty, body, *is_tailrec, stmt.span.clone()),
             Stmt::Expr(expr) => {
                 let typed_expr = self.check_expr(expr)?;
                 Ok(TypedStmt::new(TypedStmtKind::Expr(typed_expr), stmt.span.clone()))
             }
-            Stmt::Enum { name, variants } => {
+            Stmt::Enum { name, type_params: _, variants } => {
                 // Enum was already registered in the first pass
                 // Just create the typed statement
+                // TODO: Handle generic enums
                 let typed_variants: Vec<EnumVariantDef> = variants
                     .iter()
                     .map(|v| {
@@ -196,12 +220,27 @@ impl TypeChecker {
     fn check_fn_stmt(
         &mut self,
         name: &str,
+        type_params: &[String],
         params: &[Spanned<crate::ast::Param>],
         return_ty: &Spanned<crate::ast::Type>,
         body: &Spanned<Expr>,
         is_tailrec: bool,
         span: logos::Span,
     ) -> Result<TypedStmt, TypeError> {
+        // For generic functions, we skip type checking the body until instantiation
+        if !type_params.is_empty() {
+            // Generic functions are stored but not compiled until instantiated
+            // Return a placeholder typed statement
+            // The actual type checking happens when the function is called with concrete types
+            return Ok(TypedStmt::new(
+                TypedStmtKind::GenericFn {
+                    name: name.to_string(),
+                    type_params: type_params.to_vec(),
+                },
+                span,
+            ));
+        }
+
         let ret_type = Type::from_ast(&return_ty.node);
 
         // Enter new scope for function body
@@ -289,7 +328,7 @@ impl TypeChecker {
                 Err(TypeError::undefined_variable(name.clone(), expr.span.clone()))
             }
             Expr::Binary { op, left, right } => self.check_binary(*op, left, right, expr.span.clone()),
-            Expr::Call { callee, args } => self.check_call(callee, args, expr.span.clone()),
+            Expr::Call { callee, type_args, args } => self.check_call(callee, type_args.as_ref(), args, expr.span.clone()),
             Expr::If {
                 condition,
                 then_branch,
@@ -392,8 +431,8 @@ impl TypeChecker {
                 // Binary operations: neither operand is in tail position
                 self.check_binary_tailrec(*op, left, right, expr.span.clone())
             }
-            Expr::Call { callee, args } => {
-                self.check_call_tailrec(callee, args, expr.span.clone(), in_tail_position)
+            Expr::Call { callee, type_args, args } => {
+                self.check_call_tailrec(callee, type_args.as_ref(), args, expr.span.clone(), in_tail_position)
             }
             Expr::If {
                 condition,
@@ -448,10 +487,18 @@ impl TypeChecker {
     fn check_call_tailrec(
         &mut self,
         callee: &str,
+        type_args: Option<&Vec<Spanned<crate::ast::Type>>>,
         args: &[Spanned<Expr>],
         span: logos::Span,
         in_tail_position: bool,
     ) -> Result<TypedExpr, TypeError> {
+        // Check if this is a generic function call
+        if let Some(generic_def) = self.env.lookup_generic_function(callee) {
+            let generic_def = generic_def.clone();
+            // For generic calls in tailrec context, use the non-tailrec path for simplicity
+            return self.check_generic_call(callee, &generic_def, type_args, args, span);
+        }
+
         let fn_type = match self.env.lookup(callee) {
             Some(ty) => ty.clone(),
             None => return Err(TypeError::undefined_function(callee.to_string(), span)),
@@ -649,10 +696,17 @@ impl TypeChecker {
     fn check_call(
         &mut self,
         callee: &str,
+        type_args: Option<&Vec<Spanned<crate::ast::Type>>>,
         args: &[Spanned<Expr>],
         span: logos::Span,
     ) -> Result<TypedExpr, TypeError> {
-        // First check if callee is a function
+        // Check if this is a generic function call
+        if let Some(generic_def) = self.env.lookup_generic_function(callee) {
+            let generic_def = generic_def.clone();
+            return self.check_generic_call(callee, &generic_def, type_args, args, span);
+        }
+
+        // First check if callee is a regular (non-generic) function
         if let Some(fn_type) = self.env.lookup(callee) {
             let fn_type = fn_type.clone();
             match fn_type {
@@ -719,6 +773,158 @@ impl TypeChecker {
         }
 
         Err(TypeError::undefined_function(callee.to_string(), span))
+    }
+
+    /// Check a call to a generic function, instantiating it with concrete types.
+    fn check_generic_call(
+        &mut self,
+        callee: &str,
+        generic_def: &env::GenericFunctionDef,
+        type_args: Option<&Vec<Spanned<crate::ast::Type>>>,
+        args: &[Spanned<Expr>],
+        span: logos::Span,
+    ) -> Result<TypedExpr, TypeError> {
+        // Get type arguments (either explicit or inferred)
+        let concrete_types: Vec<Type> = match type_args {
+            Some(targs) => targs.iter().map(|t| Type::from_ast(&t.node)).collect(),
+            None => {
+                // Type inference: for now, require explicit type arguments
+                return Err(TypeError::type_inference_failed(
+                    callee.to_string(),
+                    generic_def.type_params.clone(),
+                    span,
+                ));
+            }
+        };
+
+        // Check that we have the right number of type arguments
+        if concrete_types.len() != generic_def.type_params.len() {
+            return Err(TypeError::wrong_number_of_type_args(
+                callee.to_string(),
+                generic_def.type_params.len(),
+                concrete_types.len(),
+                span,
+            ));
+        }
+
+        // Create a type substitution map
+        let mut type_subst: std::collections::HashMap<String, Type> = std::collections::HashMap::new();
+        for (param, ty) in generic_def.type_params.iter().zip(concrete_types.iter()) {
+            type_subst.insert(param.clone(), ty.clone());
+        }
+
+        // Get the function parameters and return type from the AST
+        let (params, return_ty) = match &generic_def.ast.node {
+            Stmt::Fn { params, return_ty, .. } => (params, return_ty),
+            _ => unreachable!("generic_def should always contain a Fn statement"),
+        };
+
+        // Substitute type parameters in parameter types
+        let param_types: Vec<Type> = params
+            .iter()
+            .map(|p| {
+                let ty = Type::from_ast(&p.node.ty.node);
+                self.substitute_types(&ty, &type_subst)
+            })
+            .collect();
+
+        // Substitute type parameters in return type
+        let ret_type = self.substitute_types(&Type::from_ast(&return_ty.node), &type_subst);
+
+        // Check arity
+        if args.len() != param_types.len() {
+            return Err(TypeError::arity_mismatch(param_types.len(), args.len(), span));
+        }
+
+        // Check each argument against its expected type
+        let mut typed_args = Vec::new();
+        for (arg, expected_ty) in args.iter().zip(param_types.iter()) {
+            let typed_arg = self.check_expr_expecting(arg, expected_ty)?;
+            typed_args.push(typed_arg);
+        }
+
+        // Generate a monomorphized function name
+        let mono_name = self.mangle_generic_name(callee, &concrete_types);
+
+        // Generate monomorphization request if not already generated
+        if !self.generated_monomorphizations.contains(&mono_name) {
+            self.generated_monomorphizations.insert(mono_name.clone());
+
+            // Get the function body and is_tailrec from the AST
+            let (body, is_tailrec) = match &generic_def.ast.node {
+                Stmt::Fn { body, is_tailrec, .. } => (body, *is_tailrec),
+                _ => unreachable!(),
+            };
+
+            // Type check the body with type parameters bound to concrete types
+            self.env.push_scope();
+
+            // Bind parameters with concrete types
+            let mut typed_params = Vec::new();
+            for (param, concrete_ty) in params.iter().zip(param_types.iter()) {
+                self.env.define(param.node.name.clone(), concrete_ty.clone());
+                typed_params.push((param.node.name.clone(), concrete_ty.clone()));
+            }
+
+            // Type check the body
+            let typed_body = self.check_expr_expecting(body, &ret_type)?;
+
+            self.env.pop_scope();
+
+            // Create the monomorphization request
+            let request = MonomorphizationRequest {
+                mangled_name: mono_name.clone(),
+                original_name: callee.to_string(),
+                params: typed_params,
+                return_ty: ret_type.clone(),
+                body: typed_body,
+                is_tailrec,
+            };
+            self.monomorphizations.push(request);
+        }
+
+        Ok(TypedExpr::new(
+            TypedExprKind::Call {
+                callee: mono_name,
+                args: typed_args,
+                is_tail_call: false,
+            },
+            ret_type,
+            span,
+        ))
+    }
+
+    /// Substitute type variables with concrete types.
+    fn substitute_types(&self, ty: &Type, subst: &std::collections::HashMap<String, Type>) -> Type {
+        match ty {
+            Type::Enum { name, variants } if variants.is_empty() => {
+                // This might be a type variable
+                if let Some(concrete) = subst.get(name) {
+                    concrete.clone()
+                } else {
+                    // Try to resolve as enum
+                    self.env.resolve_type(ty)
+                }
+            }
+            Type::TypeVar(name) => {
+                subst.get(name).cloned().unwrap_or_else(|| ty.clone())
+            }
+            Type::Function { params, ret } => Type::Function {
+                params: params.iter().map(|p| self.substitute_types(p, subst)).collect(),
+                ret: Box::new(self.substitute_types(ret, subst)),
+            },
+            Type::GenericInstance { name, type_args } => Type::GenericInstance {
+                name: name.clone(),
+                type_args: type_args.iter().map(|t| self.substitute_types(t, subst)).collect(),
+            },
+            _ => ty.clone(),
+        }
+    }
+
+    /// Generate a mangled name for a monomorphized generic function.
+    fn mangle_generic_name(&self, base_name: &str, type_args: &[Type]) -> String {
+        let type_names: Vec<String> = type_args.iter().map(|t| t.display_name()).collect();
+        format!("{}${}", base_name, type_names.join("$"))
     }
 
     fn check_if(

@@ -165,7 +165,7 @@ pub fn run() -> Result<(), i32> {
                     // In a full implementation, we'd also show the value
                     println!("_ : {}", ty);
                 }
-                Stmt::Enum { name, variants } => {
+                Stmt::Enum { name, variants, .. } => {
                     let variant_names: Vec<String> = variants
                         .iter()
                         .map(|v| {
@@ -228,6 +228,7 @@ fn format_stmt(stmt: &Stmt) -> String {
             return_ty,
             body,
             is_tailrec,
+            ..
         } => {
             let params_str: Vec<String> = params
                 .iter()
@@ -246,7 +247,7 @@ fn format_stmt(stmt: &Stmt) -> String {
         Stmt::Expr(expr) => {
             format!("{};", format_expr(&expr.node))
         }
-        Stmt::Enum { name, variants } => {
+        Stmt::Enum { name, variants, .. } => {
             let variant_strs: Vec<String> = variants
                 .iter()
                 .map(|v| {
@@ -279,7 +280,7 @@ fn format_expr(expr: &crate::ast::Expr) -> String {
                 format_expr(&right.node)
             )
         }
-        crate::ast::Expr::Call { callee, args } => {
+        crate::ast::Expr::Call { callee, args, .. } => {
             let args_str: Vec<String> = args.iter().map(|a| format_expr(&a.node)).collect();
             format!("{}({})", callee, args_str.join(", "))
         }
@@ -374,6 +375,10 @@ fn type_to_string(ty: &crate::ast::Type) -> String {
         crate::ast::Type::String => "String".to_string(),
         crate::ast::Type::Bool => "Bool".to_string(),
         crate::ast::Type::Named(name) => name.clone(),
+        crate::ast::Type::Generic { name, type_args } => {
+            let args_str: Vec<String> = type_args.iter().map(|t| type_to_string(&t.node)).collect();
+            format!("{}<{}>", name, args_str.join(", "))
+        }
     }
 }
 
@@ -425,7 +430,7 @@ fn print_env(program: &Program) {
             Stmt::Expr(_) => {
                 // Expression statements aren't persisted, but handle for completeness
             }
-            Stmt::Enum { name, variants } => {
+            Stmt::Enum { name, variants, .. } => {
                 let variant_names: Vec<String> = variants
                     .iter()
                     .map(|v| {
