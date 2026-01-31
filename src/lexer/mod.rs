@@ -35,6 +35,12 @@ pub enum Token {
     #[token("false")]
     False,
 
+    #[token("enum")]
+    Enum,
+
+    #[token("match")]
+    Match,
+
     // Type keywords
     #[token("Int")]
     IntType,
@@ -84,6 +90,18 @@ pub enum Token {
     // Arrow (must come before Minus)
     #[token("->")]
     Arrow,
+
+    // Fat arrow for match arms (must come before Assign)
+    #[token("=>")]
+    FatArrow,
+
+    // Pipe for or-patterns
+    #[token("|")]
+    Pipe,
+
+    // Underscore for wildcard patterns (higher priority than Ident)
+    #[token("_", priority = 3)]
+    Underscore,
 
     // Arithmetic operators
     #[token("+")]

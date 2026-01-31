@@ -18,6 +18,8 @@ pub enum Type {
     Float,
     String,
     Bool,
+    /// A named type (e.g., enum type like `Option` or `Color`)
+    Named(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,6 +58,37 @@ pub enum Literal {
     Bool(bool),
 }
 
+/// A pattern for pattern matching
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    /// Wildcard pattern: `_`
+    Wildcard,
+    /// Literal pattern: `42`, `true`, `"hello"`
+    Literal(Literal),
+    /// Variable binding: `x`, `foo`
+    Ident(String),
+    /// Enum variant pattern: `None` or `Some(x)`
+    Variant {
+        name: String,
+        payload: Option<Box<Spanned<Pattern>>>,
+    },
+}
+
+/// A single arm of a match expression
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Spanned<Pattern>,
+    pub body: Spanned<Expr>,
+}
+
+/// A variant in an enum definition
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariant {
+    pub name: String,
+    /// Optional payload type for data-carrying variants
+    pub payload: Option<Spanned<Type>>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Literal(Literal),
@@ -77,6 +110,16 @@ pub enum Expr {
     Block {
         stmts: Vec<Spanned<Stmt>>,
         expr: Option<Box<Spanned<Expr>>>,
+    },
+    /// Match expression: `match expr { pat => body, ... }`
+    Match {
+        expr: Box<Spanned<Expr>>,
+        arms: Vec<Spanned<MatchArm>>,
+    },
+    /// Enum variant constructor: `Some(42)` or `None`
+    EnumVariant {
+        variant: String,
+        payload: Option<Box<Spanned<Expr>>>,
     },
 }
 
@@ -101,6 +144,11 @@ pub enum Stmt {
         is_tailrec: bool,
     },
     Expr(Spanned<Expr>),
+    /// Enum definition: `enum Color { Red, Green, Blue }`
+    Enum {
+        name: String,
+        variants: Vec<Spanned<EnumVariant>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

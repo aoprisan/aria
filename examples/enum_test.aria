@@ -1,0 +1,42 @@
+// Example: Enums and Pattern Matching in Aria
+
+// Simple unit enum
+enum Color { Red, Green, Blue }
+
+// Enum with payloads
+enum Option { None, Some(Int) }
+
+// Test unit enum variant
+let red = Red;
+
+// Test pattern matching on unit enum
+fn color_value(c: Color) -> Int {
+    match c {
+        Red => 1,
+        Green => 2,
+        Blue => 3,
+    }
+}
+
+// Test enum with payload
+let some_val = Some(42);
+let none_val = None;
+
+// Test pattern matching with payload extraction
+fn unwrap_or(opt: Option, default: Int) -> Int {
+    match opt {
+        None => default,
+        Some(x) => x,
+    }
+}
+
+// Use the functions
+let r = color_value(Red);
+let g = color_value(Green);
+let b = color_value(Blue);
+
+let val1 = unwrap_or(some_val, 0);
+let val2 = unwrap_or(none_val, 99);
+
+// Final result should be the sum
+val1 + val2;

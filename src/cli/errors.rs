@@ -89,6 +89,45 @@ fn report_type_error(filename: &str, source: &str, error: &TypeError) {
                 func_name
             )
         }
+        TypeErrorKind::UndefinedEnum { name } => {
+            format!("cannot find enum type `{}` in this scope", name)
+        }
+        TypeErrorKind::UndefinedVariant { enum_name, variant_name } => {
+            format!(
+                "enum `{}` has no variant named `{}`",
+                enum_name, variant_name
+            )
+        }
+        TypeErrorKind::MatchArmTypeMismatch { first_ty, arm_ty } => {
+            format!(
+                "match arm has type `{}`, but first arm has type `{}`",
+                arm_ty, first_ty
+            )
+        }
+        TypeErrorKind::NonExhaustiveMatch { missing_variants } => {
+            format!(
+                "non-exhaustive match: missing variants: {}",
+                missing_variants.join(", ")
+            )
+        }
+        TypeErrorKind::PatternTypeMismatch { expected, found } => {
+            format!(
+                "pattern has type `{}`, but expected `{}`",
+                found, expected
+            )
+        }
+        TypeErrorKind::MissingVariantPayload { variant_name } => {
+            format!(
+                "variant `{}` expects a payload, but none was provided",
+                variant_name
+            )
+        }
+        TypeErrorKind::UnexpectedVariantPayload { variant_name } => {
+            format!(
+                "variant `{}` does not expect a payload",
+                variant_name
+            )
+        }
     };
 
     let title = match &error.kind {
@@ -101,6 +140,13 @@ fn report_type_error(filename: &str, source: &str, error: &TypeError) {
         TypeErrorKind::BinaryOpTypeMismatch { .. } => "invalid operator",
         TypeErrorKind::IfBranchTypeMismatch { .. } => "incompatible branch types",
         TypeErrorKind::NotTailRecursive { .. } => "not tail recursive",
+        TypeErrorKind::UndefinedEnum { .. } => "undefined enum",
+        TypeErrorKind::UndefinedVariant { .. } => "undefined variant",
+        TypeErrorKind::MatchArmTypeMismatch { .. } => "incompatible match arm types",
+        TypeErrorKind::NonExhaustiveMatch { .. } => "non-exhaustive match",
+        TypeErrorKind::PatternTypeMismatch { .. } => "pattern type mismatch",
+        TypeErrorKind::MissingVariantPayload { .. } => "missing variant payload",
+        TypeErrorKind::UnexpectedVariantPayload { .. } => "unexpected variant payload",
     };
 
     Report::build(ReportKind::Error, filename, error.span.start)
