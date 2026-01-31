@@ -19,6 +19,10 @@ fn check(source: &str) -> Result<Type, Vec<TypeErrorKind>> {
                     crate::typechecker::typed_ast::TypedStmtKind::Fn { return_ty, .. } => {
                         return_ty.clone()
                     }
+                    crate::typechecker::typed_ast::TypedStmtKind::GenericFn { .. } => {
+                        // For generic functions, return a placeholder type
+                        Type::Unit
+                    }
                     crate::typechecker::typed_ast::TypedStmtKind::Expr(e) => e.ty.clone(),
                     crate::typechecker::typed_ast::TypedStmtKind::Enum { name, variants } => {
                         Type::Enum {

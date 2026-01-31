@@ -241,7 +241,7 @@ fn test_grouped_expression() {
 fn test_function_call_no_args() {
     let expr = parse_expr("foo()").unwrap();
     match expr.node {
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             assert_eq!(callee, "foo");
             assert!(args.is_empty());
         }
@@ -253,7 +253,7 @@ fn test_function_call_no_args() {
 fn test_function_call_single_arg() {
     let expr = parse_expr("foo(42)").unwrap();
     match expr.node {
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             assert_eq!(callee, "foo");
             assert_eq!(args.len(), 1);
             assert_eq!(args[0].node, Expr::Literal(Literal::Integer(42)));
@@ -266,7 +266,7 @@ fn test_function_call_single_arg() {
 fn test_function_call_multiple_args() {
     let expr = parse_expr("add(1, 2, 3)").unwrap();
     match expr.node {
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             assert_eq!(callee, "add");
             assert_eq!(args.len(), 3);
             assert_eq!(args[0].node, Expr::Literal(Literal::Integer(1)));
@@ -281,7 +281,7 @@ fn test_function_call_multiple_args() {
 fn test_function_call_expression_args() {
     let expr = parse_expr("add(1 + 2, x * y)").unwrap();
     match expr.node {
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             assert_eq!(callee, "add");
             assert_eq!(args.len(), 2);
             match &args[0].node {
@@ -698,18 +698,18 @@ fn test_complex_expression() {
 fn test_nested_function_calls() {
     let expr = parse_expr("foo(bar(1), baz(2, 3))").unwrap();
     match expr.node {
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             assert_eq!(callee, "foo");
             assert_eq!(args.len(), 2);
             match &args[0].node {
-                Expr::Call { callee, args } => {
+                Expr::Call { callee, args, .. } => {
                     assert_eq!(callee, "bar");
                     assert_eq!(args.len(), 1);
                 }
                 _ => panic!("Expected call expression"),
             }
             match &args[1].node {
-                Expr::Call { callee, args } => {
+                Expr::Call { callee, args, .. } => {
                     assert_eq!(callee, "baz");
                     assert_eq!(args.len(), 2);
                 }

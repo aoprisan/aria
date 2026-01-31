@@ -72,7 +72,7 @@ impl CodeGen {
 
     /// Generate WASM bytecode from a typed program.
     pub fn generate(&mut self, program: &TypedProgram) -> Result<Vec<u8>, CodeGenError> {
-        // First pass: register all function signatures
+        // First pass: register all function signatures (regular functions)
         for stmt in &program.stmts {
             if let TypedStmtKind::Fn {
                 name,
@@ -97,9 +97,27 @@ impl CodeGen {
             }
         }
 
+        // Register monomorphized function signatures
+        for mono in &program.monomorphizations {
+            let func_idx = self.functions.len() as u32;
+            self.functions.insert(mono.mangled_name.clone(), func_idx);
+
+            let param_types: Vec<ValType> = mono
+                .params
+                .iter()
+                .map(|(_, ty)| self.type_to_valtype(ty))
+                .collect::<Result<_, _>>()?;
+
+            let return_types = self.return_type_to_valtypes(&mono.return_ty)?;
+            let type_idx = self.get_or_create_type(param_types, return_types);
+            self.function_type_indices.push(type_idx);
+
+            self.exports.push((mono.mangled_name.clone(), func_idx));
+        }
+
         // Check if we have any top-level non-function statements that need a main
         let has_top_level_code = program.stmts.iter().any(|stmt| {
-            !matches!(stmt.kind, TypedStmtKind::Fn { .. })
+            !matches!(stmt.kind, TypedStmtKind::Fn { .. } | TypedStmtKind::GenericFn { .. })
         });
 
         if has_top_level_code {
@@ -126,6 +144,16 @@ impl CodeGen {
             {
                 self.compile_function(name, params, body, *is_tailrec)?;
             }
+        }
+
+        // Compile monomorphized function bodies
+        for mono in &program.monomorphizations {
+            self.compile_function(
+                &mono.mangled_name,
+                &mono.params,
+                &mono.body,
+                mono.is_tailrec,
+            )?;
         }
 
         // Compile main function if needed
@@ -163,6 +191,14 @@ impl CodeGen {
             // - Lower 32 bits: tag (variant index)
             // - Upper 32 bits: payload (for variants with i32 payload)
             Type::Enum { .. } => Ok(ValType::I64),
+            // Type variables should be resolved before codegen
+            Type::TypeVar(name) => {
+                Err(CodeGenError::UnsupportedType(format!("unresolved type variable {}", name)))
+            }
+            // Generic instances should be monomorphized before codegen
+            Type::GenericInstance { name, .. } => {
+                Err(CodeGenError::UnsupportedType(format!("unresolved generic type {}", name)))
+            }
         }
     }
 
@@ -286,8 +322,8 @@ impl CodeGen {
 
         for stmt in &program.stmts {
             match &stmt.kind {
-                TypedStmtKind::Fn { .. } | TypedStmtKind::Enum { .. } => {
-                    // Skip function and enum definitions, already handled
+                TypedStmtKind::Fn { .. } | TypedStmtKind::GenericFn { .. } | TypedStmtKind::Enum { .. } => {
+                    // Skip function, generic function, and enum definitions, already handled
                 }
                 TypedStmtKind::Let { name, ty, value } => {
                     // Generate value
@@ -610,6 +646,11 @@ impl CodeGen {
                 Err(CodeGenError::UnsupportedFeature(
                     "nested function definitions".to_string(),
                 ))
+            }
+            TypedStmtKind::GenericFn { .. } => {
+                // Generic function definitions don't generate code directly
+                // (they are monomorphized at call sites)
+                Ok(vec![])
             }
             TypedStmtKind::Expr(expr) => {
                 let mut instrs = self.gen_expr(expr)?;

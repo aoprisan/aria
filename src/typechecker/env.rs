@@ -1,6 +1,15 @@
 use std::collections::HashMap;
 
+use crate::ast::{Spanned, Stmt};
+
 use super::types::{EnumVariantDef, Type};
+
+/// Information about a generic function definition.
+#[derive(Debug, Clone)]
+pub struct GenericFunctionDef {
+    pub type_params: Vec<String>,
+    pub ast: Spanned<Stmt>,
+}
 
 /// Environment for tracking variable bindings across scopes.
 #[derive(Debug, Clone)]
@@ -10,6 +19,8 @@ pub struct Env {
     scopes: Vec<HashMap<String, Type>>,
     /// Registered enum types (name -> full enum type with variants)
     enums: HashMap<String, Type>,
+    /// Generic function definitions (for later monomorphization)
+    generic_functions: HashMap<String, GenericFunctionDef>,
 }
 
 impl Env {
@@ -17,6 +28,7 @@ impl Env {
         Env {
             scopes: vec![HashMap::new()],
             enums: HashMap::new(),
+            generic_functions: HashMap::new(),
         }
     }
 
@@ -108,6 +120,30 @@ impl Env {
             }
             _ => ty.clone(),
         }
+    }
+
+    /// Register a generic function definition.
+    /// Returns false if a function with this name already exists.
+    pub fn define_generic_function(
+        &mut self,
+        name: String,
+        type_params: Vec<String>,
+        ast: Spanned<Stmt>,
+    ) -> bool {
+        if self.generic_functions.contains_key(&name) || self.lookup(&name).is_some() {
+            false
+        } else {
+            self.generic_functions.insert(
+                name,
+                GenericFunctionDef { type_params, ast },
+            );
+            true
+        }
+    }
+
+    /// Look up a generic function definition by name.
+    pub fn lookup_generic_function(&self, name: &str) -> Option<&GenericFunctionDef> {
+        self.generic_functions.get(name)
     }
 }
 

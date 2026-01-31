@@ -1,0 +1,9 @@
+// Test generic function
+fn identity<T>(x: T) -> T { x }
+
+// Call with explicit type argument
+let a = identity<Int>(42);
+let b = identity<Bool>(true);
+
+// Return value
+a;

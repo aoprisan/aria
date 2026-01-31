@@ -27,6 +27,13 @@ pub enum Type {
         name: String,
         variants: Vec<EnumVariantDef>,
     },
+    /// A type variable (generic parameter like T, U)
+    TypeVar(String),
+    /// A generic type instantiation (e.g., Option<Int>)
+    GenericInstance {
+        name: String,
+        type_args: Vec<Type>,
+    },
 }
 
 impl Type {
@@ -41,10 +48,19 @@ impl Type {
             ast::Type::Bool => Type::Bool,
             ast::Type::Named(name) => {
                 // Named types need to be resolved by the type checker
-                // We create a placeholder enum type; the type checker will resolve it
+                // Could be a type parameter (like T) or an enum/struct name
                 Type::Enum {
                     name: name.clone(),
                     variants: Vec::new(), // Will be filled in by type checker
+                }
+            }
+            ast::Type::Generic { name, type_args } => {
+                // Generic type instantiation like Option<Int>
+                // Convert type arguments to internal representation
+                let args: Vec<Type> = type_args.iter().map(|t| Type::from_ast(&t.node)).collect();
+                Type::GenericInstance {
+                    name: name.clone(),
+                    type_args: args,
                 }
             }
         }
@@ -64,6 +80,11 @@ impl Type {
                 format!("fn({}) -> {}", params_str.join(", "), ret.display_name())
             }
             Type::Enum { name, .. } => name.clone(),
+            Type::TypeVar(name) => name.clone(),
+            Type::GenericInstance { name, type_args } => {
+                let args_str: Vec<String> = type_args.iter().map(|t| t.display_name()).collect();
+                format!("{}<{}>", name, args_str.join(", "))
+            }
         }
     }
 
