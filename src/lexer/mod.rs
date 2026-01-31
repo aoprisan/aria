@@ -41,6 +41,18 @@ pub enum Token {
     #[token("match")]
     Match,
 
+    #[token("yield")]
+    Yield,
+
+    #[token("gen")]
+    Gen,
+
+    #[token("async")]
+    Async,
+
+    #[token("await")]
+    Await,
+
     // Type keywords
     #[token("Int")]
     IntType,

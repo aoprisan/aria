@@ -199,6 +199,14 @@ impl CodeGen {
             Type::GenericInstance { name, .. } => {
                 Err(CodeGenError::UnsupportedType(format!("unresolved generic type {}", name)))
             }
+            // Generators require special handling (state machine compilation)
+            Type::Generator(_) => {
+                Err(CodeGenError::UnsupportedType("Generator (generator codegen not yet implemented)".to_string()))
+            }
+            // Futures require special handling (async runtime)
+            Type::Future(_) => {
+                Err(CodeGenError::UnsupportedType("Future (async codegen not yet implemented)".to_string()))
+            }
         }
     }
 
@@ -414,6 +422,26 @@ impl CodeGen {
                 payload,
                 ..
             } => self.gen_enum_variant(*variant_index, payload.as_deref()),
+            TypedExprKind::Yield(_) => {
+                // Generator state machine compilation requires:
+                // 1. Analyzing yield points to determine state transitions
+                // 2. Transforming control flow into explicit states
+                // 3. Generating resumable state machine code
+                // This is a significant undertaking planned for future work.
+                Err(CodeGenError::UnsupportedType(
+                    "yield expressions require generator state machine compilation (not yet implemented)".to_string()
+                ))
+            }
+            TypedExprKind::Await(_) => {
+                // Await expressions require async runtime support:
+                // 1. Future polling mechanism
+                // 2. Continuation-passing style transformation or state machine
+                // 3. Event loop / scheduler integration
+                // This is a significant undertaking planned for future work.
+                Err(CodeGenError::UnsupportedType(
+                    "await expressions require async runtime compilation (not yet implemented)".to_string()
+                ))
+            }
         }
     }
 

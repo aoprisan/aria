@@ -1,0 +1,14 @@
+// Test file for generator parsing
+gen fn simple_gen() -> Int {
+    yield 1;
+    yield 2;
+    yield 3;
+    0
+}
+
+// Generator with parameters
+gen fn range(start: Int, end: Int) -> Int {
+    let i = start;
+    yield i;
+    0
+}

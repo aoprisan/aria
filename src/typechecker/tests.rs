@@ -699,3 +699,144 @@ fn tailrec_calls_other_function_in_tail_position() {
         Type::Int
     );
 }
+
+// ============================================================================
+// Generator Tests
+// ============================================================================
+
+#[test]
+fn generator_simple() {
+    // A simple generator function should type check
+    assert_eq!(
+        check_ok(
+            r#"
+            gen fn counter() -> Int {
+                yield 1;
+                yield 2;
+                yield 3;
+                0
+            }
+            "#
+        ),
+        Type::Generator(Box::new(Type::Int))
+    );
+}
+
+#[test]
+fn generator_with_params() {
+    // Generator with parameters
+    assert_eq!(
+        check_ok(
+            r#"
+            gen fn range(start: Int, end: Int) -> Int {
+                yield start;
+                0
+            }
+            "#
+        ),
+        Type::Generator(Box::new(Type::Int))
+    );
+}
+
+#[test]
+fn yield_outside_generator_error() {
+    // Yield outside of a generator function should fail
+    assert_eq!(
+        check_err("fn not_gen() -> Int { yield 1; 0 }"),
+        TypeErrorKind::YieldOutsideGenerator
+    );
+}
+
+#[test]
+fn yield_type_mismatch_error() {
+    // Yield with wrong type should fail
+    assert!(matches!(
+        check_err("gen fn bad() -> Int { yield true; 0 }"),
+        TypeErrorKind::YieldTypeMismatch { .. }
+    ));
+}
+
+#[test]
+fn generator_bool_type() {
+    // Generator with Bool yield type
+    assert_eq!(
+        check_ok(
+            r#"
+            gen fn bool_gen() -> Bool {
+                yield true;
+                yield false;
+                true
+            }
+            "#
+        ),
+        Type::Generator(Box::new(Type::Bool))
+    );
+}
+
+// ============================================================================
+// Async/Await Tests
+// ============================================================================
+
+#[test]
+fn async_function_simple() {
+    // A simple async function should type check and return Future<T>
+    assert_eq!(
+        check_ok(
+            r#"
+            async fn fetch_data() -> Int {
+                42
+            }
+            "#
+        ),
+        Type::Future(Box::new(Type::Int))
+    );
+}
+
+#[test]
+fn async_function_with_params() {
+    // Async function with parameters
+    assert_eq!(
+        check_ok(
+            r#"
+            async fn compute(x: Int, y: Int) -> Int {
+                x + y
+            }
+            "#
+        ),
+        Type::Future(Box::new(Type::Int))
+    );
+}
+
+#[test]
+fn await_outside_async_error() {
+    // Await outside of an async function should fail
+    assert_eq!(
+        check_err("async fn get_future() -> Int { 1 } fn not_async() -> Int { await get_future() }"),
+        TypeErrorKind::AwaitOutsideAsync
+    );
+}
+
+#[test]
+fn await_non_future_error() {
+    // Await on a non-Future type should fail
+    assert!(matches!(
+        check_err("async fn bad() -> Int { await 42 }"),
+        TypeErrorKind::AwaitNonFuture { .. }
+    ));
+}
+
+#[test]
+fn async_await_chaining() {
+    // Await on a Future should give the inner type
+    assert_eq!(
+        check_ok(
+            r#"
+            async fn get_int() -> Int { 42 }
+            async fn use_int() -> Int {
+                await get_int()
+            }
+            "#
+        ),
+        Type::Future(Box::new(Type::Int))
+    );
+}

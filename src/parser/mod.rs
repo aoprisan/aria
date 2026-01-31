@@ -179,11 +179,21 @@ impl<'source> Parser<'source> {
     fn parse_stmt(&mut self) -> ParseResult<Spanned<Stmt>> {
         match self.peek_token() {
             Some(Ok(Token::Let)) => self.parse_let_stmt(),
-            Some(Ok(Token::Fn)) => self.parse_fn_stmt(false),
+            Some(Ok(Token::Fn)) => self.parse_fn_stmt(false, false),
             Some(Ok(Token::Tailrec)) => {
                 let start_span = self.advance().unwrap().1; // consume 'tailrec'
                 self.expect(Token::Fn)?;
-                self.parse_fn_stmt_inner(true, start_span)
+                self.parse_fn_stmt_inner(true, false, false, start_span)
+            }
+            Some(Ok(Token::Gen)) => {
+                let start_span = self.advance().unwrap().1; // consume 'gen'
+                self.expect(Token::Fn)?;
+                self.parse_fn_stmt_inner(false, true, false, start_span)
+            }
+            Some(Ok(Token::Async)) => {
+                let start_span = self.advance().unwrap().1; // consume 'async'
+                self.expect(Token::Fn)?;
+                self.parse_fn_stmt_inner(false, false, true, start_span)
             }
             Some(Ok(Token::Enum)) => self.parse_enum_stmt(),
             Some(Ok(_)) => self.parse_expr_stmt(),
@@ -218,12 +228,12 @@ impl<'source> Parser<'source> {
         Ok(Spanned::new(Stmt::Let { name, ty, value }, span))
     }
 
-    fn parse_fn_stmt(&mut self, is_tailrec: bool) -> ParseResult<Spanned<Stmt>> {
+    fn parse_fn_stmt(&mut self, is_tailrec: bool, is_generator: bool) -> ParseResult<Spanned<Stmt>> {
         let start_span = self.expect(Token::Fn)?;
-        self.parse_fn_stmt_inner(is_tailrec, start_span)
+        self.parse_fn_stmt_inner(is_tailrec, is_generator, false, start_span)
     }
 
-    fn parse_fn_stmt_inner(&mut self, is_tailrec: bool, start_span: Span) -> ParseResult<Spanned<Stmt>> {
+    fn parse_fn_stmt_inner(&mut self, is_tailrec: bool, is_generator: bool, is_async: bool, start_span: Span) -> ParseResult<Spanned<Stmt>> {
         let (name, _) = self.expect_ident()?;
 
         // Parse optional type parameters: `<T, U>`
@@ -249,6 +259,8 @@ impl<'source> Parser<'source> {
                 return_ty,
                 body,
                 is_tailrec,
+                is_generator,
+                is_async,
             },
             span,
         ))
@@ -424,6 +436,8 @@ impl<'source> Parser<'source> {
             Some(Ok(Token::LBrace)) => self.parse_block_expr(),
             Some(Ok(Token::If)) => self.parse_if_expr(),
             Some(Ok(Token::Match)) => self.parse_match_expr(),
+            Some(Ok(Token::Yield)) => self.parse_yield_expr(),
+            Some(Ok(Token::Await)) => self.parse_await_expr(),
             Some(Ok(_)) => {
                 let (tok, span) = self.advance().unwrap();
                 Err(ParseError::unexpected_token(
@@ -441,6 +455,22 @@ impl<'source> Parser<'source> {
                 self.current_span.clone(),
             )),
         }
+    }
+
+    /// Parse a yield expression: `yield value`
+    fn parse_yield_expr(&mut self) -> ParseResult<Spanned<Expr>> {
+        let start_span = self.expect(Token::Yield)?;
+        let value = self.parse_expr()?;
+        let span = start_span.start..value.span.end;
+        Ok(Spanned::new(Expr::Yield(Box::new(value)), span))
+    }
+
+    /// Parse an await expression: `await future_expr`
+    fn parse_await_expr(&mut self) -> ParseResult<Spanned<Expr>> {
+        let start_span = self.expect(Token::Await)?;
+        let value = self.parse_expr()?;
+        let span = start_span.start..value.span.end;
+        Ok(Spanned::new(Expr::Await(Box::new(value)), span))
     }
 
     fn parse_integer(&mut self) -> ParseResult<Spanned<Expr>> {

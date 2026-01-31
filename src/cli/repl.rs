@@ -329,6 +329,12 @@ fn format_expr(expr: &crate::ast::Expr) -> String {
                 variant.clone()
             }
         }
+        crate::ast::Expr::Yield(value) => {
+            format!("yield {}", format_expr(&value.node))
+        }
+        crate::ast::Expr::Await(value) => {
+            format!("await {}", format_expr(&value.node))
+        }
     }
 }
 
